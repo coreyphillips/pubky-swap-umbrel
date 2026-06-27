@@ -1,0 +1,38 @@
+# Pubky Swap — Umbrel app.
+#
+# Runs a pubky-swap provider against your Umbrel's existing LND ("lightning") and Electrs
+# ("electrs") apps (declared as dependencies in umbrel-app.yml). Umbrel injects the connection
+# details for those apps as the APP_LIGHTNING_* / APP_ELECTRS_* variables used below.
+#
+# For local testing: `docker compose up -d --build` (provide the APP_* vars, see README.md).
+# For the Umbrel store: publish a multi-arch image and replace `build: .` with `image: ...`.
+
+services:
+  server:
+    build: .
+    image: pubky-swap:latest
+    restart: on-failure
+    stop_grace_period: 1m
+    ports:
+      - "3737:3000" # host 3737 (umbrel-app.yml `port`) -> control panel
+    environment:
+      PORT: 3000
+
+      # --- Your Umbrel's LND node (dependency: lightning) ---
+      LND_IP: ${APP_LIGHTNING_NODE_IP}
+      LND_GRPC_PORT: ${APP_LIGHTNING_NODE_GRPC_PORT:-10009}
+      # The LND data dir is mounted read-only at /lnd; tls.cert + admin.macaroon are read from there.
+      LND_DIR: /lnd
+
+      # --- Your Umbrel's Electrs (dependency: electrs) ---
+      ELECTRS_IP: ${APP_ELECTRS_NODE_IP}
+      ELECTRS_PORT: "50001"
+
+      # Bitcoin network your node runs on (Umbrel default is mainnet).
+      NETWORK: bitcoin
+
+    volumes:
+      # LND credentials (tls.cert + macaroons), read-only.
+      - ${APP_LIGHTNING_NODE_DATA_DIR}:/lnd:ro
+      # Persistent app state: your saved config + identity + in-flight swap records.
+      - ${APP_DATA_DIR}/data:/data

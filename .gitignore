@@ -1,0 +1,9 @@
+node_modules/
+.appdata/
+.DS_Store
+.idea/
+*.macaroon
+*.cert
+*.key
+*.pem
+config.json
