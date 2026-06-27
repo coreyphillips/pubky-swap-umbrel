@@ -59,9 +59,13 @@
 
   <h2>Settings</h2>
   <div class="card">
-    <label>Pubky recovery phrase <span class="muted">(your identity — stored locally on this device)</span></label>
-    <textarea id="pubkyRecoveryPhrase" placeholder="word1 word2 … (leave blank to keep the saved one)"></textarea>
-    <label>Pubky passphrase <span class="muted">(optional)</span></label>
+    <label>Pubky identity <span class="muted" id="identityState"></span></label>
+    <textarea id="pubkyRecoveryPhrase" placeholder="recovery phrase: word1 word2 …"></textarea>
+    <div class="inline" style="margin:6px 0 0">
+      <span class="muted">or upload a recovery file:</span>
+      <input type="file" id="pkarrFile" accept=".pkarr" style="color:var(--mut);font-size:13px" />
+    </div>
+    <label>Pubky passphrase <span class="muted">(optional — for the phrase or the file)</span></label>
     <input type="password" id="pubkyPassphrase" placeholder="(leave blank if none)" />
 
     <div class="muted" style="margin:8px 0 2px">💡 Reverse swaps are funded directly from your node's
@@ -99,6 +103,7 @@
     <div class="actions">
       <button id="save">Save &amp; start</button>
       <button class="ghost" id="stop">Stop</button>
+      <button class="ghost" id="disconnect" style="color:var(--bad);border-color:rgba(248,81,73,.4)">Disconnect &amp; clear</button>
       <span class="muted" id="saveNote"></span>
     </div>
   </div>
@@ -116,7 +121,9 @@ async function loadConfig() {
   for (const f of fields) if (c[f] !== undefined) $(f).value = c[f];
   $('broadcastOffer').checked = !!c.broadcastOffer;
   $('allowUnsafe').checked = !!c.allowUnsafe;
-  $('pubkyRecoveryPhrase').placeholder = c.hasPubky ? 'saved ✓ (leave blank to keep)' : 'word1 word2 …';
+  const state = { file: 'recovery file loaded ✓', phrase: 'recovery phrase saved ✓', none: 'not set' }[c.identityType] || '';
+  $('identityState').textContent = `— ${state}`;
+  $('pubkyRecoveryPhrase').placeholder = c.hasPubky ? 'leave blank to keep current identity' : 'recovery phrase: word1 word2 …';
   updateFeeExample();
 }
 function updateFeeExample() {
@@ -125,6 +132,15 @@ function updateFeeExample() {
   $('feeExample').textContent = `≈ ${fee} sat on a 100k-sat swap`;
 }
 ['baseFee','feePpm'].forEach(id => $(id).addEventListener('input', updateFeeExample));
+
+function readFileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',').pop());
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
 
 async function save() {
   $('saveNote').textContent = 'Saving…';
@@ -135,16 +151,24 @@ async function save() {
     broadcastOffer: $('broadcastOffer').checked,
     allowUnsafe: $('allowUnsafe').checked,
   };
-  for (const f of fields.filter(f => f !== 'directions')) body[f] = Number($(f).value);
+  const f = $('pkarrFile').files[0];
+  if (f) body.pkarrBase64 = await readFileBase64(f);
+  for (const fld of fields.filter(x => x !== 'directions')) body[fld] = Number($(fld).value);
   const res = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   const j = await res.json();
   if (!res.ok) { $('saveNote').textContent = '⚠ ' + (j.error || 'error'); return; }
-  $('pubkyRecoveryPhrase').value = '';
+  $('pubkyRecoveryPhrase').value = ''; $('pubkyPassphrase').value = ''; $('pkarrFile').value = '';
   $('saveNote').textContent = j.configured ? 'Saved — provider starting.' : 'Saved — add your Pubky to start.';
-  refresh();
+  loadConfig(); refresh();
 }
 $('save').addEventListener('click', save);
 $('stop').addEventListener('click', async () => { await fetch('/api/control', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'stop'}) }); refresh(); });
+$('disconnect').addEventListener('click', async () => {
+  if (!confirm('Disconnect and clear your saved Pubky identity and settings? Your LND funds are unaffected.')) return;
+  await fetch('/api/control', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'clear'}) });
+  $('saveNote').textContent = 'Disconnected — identity cleared.';
+  loadConfig(); refresh();
+});
 $('copyPubky').addEventListener('click', () => navigator.clipboard.writeText($('sPubky').textContent));
 
 function badge(el, kind, text) { el.className = 'badge ' + kind; el.textContent = text; }

@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
+const IDENTITY_PATH = path.join(DATA_DIR, 'identity.pkarr');
 const SWAP_DATA_DIR = path.join(DATA_DIR, 'swap');
 const PROVIDER_BIN = process.env.SWAP_PROVIDER_BIN || '/usr/local/bin/swap-provider';
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -59,9 +60,13 @@ function saveConfig(cfg) {
   fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: 0o600 });
   fs.renameSync(tmp, CONFIG_PATH);
 }
+function hasRecoveryFile() {
+  return fs.existsSync(IDENTITY_PATH);
+}
 function isConfigured(cfg) {
-  // The funding wallet is LND's own on-chain wallet, so only the Pubky identity is needed.
-  return Boolean(cfg.pubkyRecoveryPhrase);
+  // The funding wallet is LND's own on-chain wallet, so only a Pubky identity is needed — either a
+  // recovery phrase or an uploaded .pkarr recovery file.
+  return Boolean(cfg.pubkyRecoveryPhrase) || hasRecoveryFile();
 }
 
 // --- provider supervision ---
@@ -90,8 +95,14 @@ function parseLogLine(l) {
 }
 
 function providerArgs(cfg) {
-  const args = [
-    '--recovery-phrase', cfg.pubkyRecoveryPhrase,
+  // Identity: a .pkarr recovery file (positional arg) takes precedence over a recovery phrase.
+  const args = [];
+  if (hasRecoveryFile()) {
+    args.push(IDENTITY_PATH);
+  } else {
+    args.push('--recovery-phrase', cfg.pubkyRecoveryPhrase);
+  }
+  args.push(
     '--network', NETWORK,
     '--directions', cfg.directions,
     '--min-amount', String(cfg.minAmount),
@@ -110,7 +121,7 @@ function providerArgs(cfg) {
     // Fund reverse-swap HTLCs from LND's own on-chain wallet (no separate seed).
     '--wallet', 'lnd',
     '--data-dir', SWAP_DATA_DIR,
-  ];
+  );
   if (cfg.pubkyPassphrase) args.push('--pass', cfg.pubkyPassphrase);
   if (cfg.broadcastOffer) args.push('--broadcast-offer');
   if (cfg.allowUnsafe) args.push('--allow-unsafe');
@@ -134,6 +145,11 @@ function startProvider() {
   });
   child.stdout.on('data', (d) => pushLog(d.toString()));
   child.stderr.on('data', (d) => pushLog(d.toString()));
+  // Without an 'error' listener a spawn failure (e.g. missing binary) would crash the server.
+  child.on('error', (e) => {
+    pushLog(`failed to start provider: ${e.message}`);
+    child = null;
+  });
   child.on('exit', (code, sig) => {
     pushLog(`provider exited (code=${code} signal=${sig || ''})`);
     child = null;
@@ -183,15 +199,37 @@ function configView() {
     quoteTtl: cfg.quoteTtl,
     broadcastOffer: cfg.broadcastOffer,
     allowUnsafe: cfg.allowUnsafe,
-    hasPubky: Boolean(cfg.pubkyRecoveryPhrase),
+    hasPubky: isConfigured(cfg),
+    identityType: hasRecoveryFile() ? 'file' : cfg.pubkyRecoveryPhrase ? 'phrase' : 'none',
   };
+}
+
+/// Stop the provider and wipe the saved identity + config (a clean disconnect).
+function clearIdentity() {
+  stopProvider();
+  providerPubky = '';
+  lndConnected = false;
+  executionCapable = false;
+  try { fs.rmSync(CONFIG_PATH, { force: true }); } catch {}
+  try { fs.rmSync(IDENTITY_PATH, { force: true }); } catch {}
+  pushLog('Disconnected — identity and settings cleared.');
 }
 
 function applyConfig(body) {
   const cfg = loadConfig();
-  // Secrets: only overwrite when a non-empty value is supplied (so re-saving doesn't wipe them).
-  if (typeof body.pubkyRecoveryPhrase === 'string' && body.pubkyRecoveryPhrase.trim())
+  // Identity: an uploaded .pkarr recovery file (base64) takes precedence and clears any phrase.
+  if (typeof body.pkarrBase64 === 'string' && body.pkarrBase64.trim()) {
+    const buf = Buffer.from(body.pkarrBase64, 'base64');
+    if (!buf.length) throw new Error('empty recovery file');
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(IDENTITY_PATH, buf, { mode: 0o600 });
+    cfg.pubkyRecoveryPhrase = '';
+  } else if (typeof body.pubkyRecoveryPhrase === 'string' && body.pubkyRecoveryPhrase.trim()) {
+    // A phrase supersedes a previously-uploaded file.
     cfg.pubkyRecoveryPhrase = body.pubkyRecoveryPhrase.trim();
+    try { fs.rmSync(IDENTITY_PATH, { force: true }); } catch {}
+  }
+  // Secrets: only overwrite when a non-empty value is supplied (so re-saving doesn't wipe them).
   if (typeof body.pubkyPassphrase === 'string') cfg.pubkyPassphrase = body.pubkyPassphrase;
 
   const num = (k, min, max) => {
@@ -258,6 +296,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       if (body.action === 'start' || body.action === 'restart') startProvider();
       else if (body.action === 'stop') stopProvider();
+      else if (body.action === 'clear') clearIdentity();
       else return sendJson(res, 400, { error: 'unknown action' });
       return sendJson(res, 200, { ok: true });
     }
