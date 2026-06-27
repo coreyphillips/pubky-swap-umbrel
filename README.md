@@ -24,6 +24,13 @@ This app is a small web control panel that **supervises the `swap-provider` daem
 Your fee is `base_fee + amount × fee_ppm / 1_000_000` (e.g. `1000 sat + 2000 ppm` = `1200 sat` on a
 100k-sat swap).
 
+## Swap as a taker
+
+The **Swap with a provider** panel turns it around: paste someone else's Pubky to **check** whether
+they're a live provider and see their rates (a quote request — no funds move), then **swap your own
+funds in or out**. Both legs are funded/claimed via your LND wallet (`--wallet lnd`), so there's
+nothing extra to configure. Identity (recovery phrase or `.pkarr`) is the one you already loaded.
+
 ## Dependencies (Umbrel apps)
 
 Declared in `umbrel-app.yml`:

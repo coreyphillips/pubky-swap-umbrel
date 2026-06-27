@@ -108,7 +108,31 @@
     </div>
   </div>
 
-  <h2>Log</h2>
+  <h2>Swap with a provider <span class="muted">(your node as the taker)</span></h2>
+  <div class="card">
+    <p class="muted" style="margin-top:0">Paste a provider's Pubky to check whether they're live and
+      see their rates, then swap your own funds in or out — funded and claimed via your LND.</p>
+    <label>Provider Pubky</label>
+    <input type="text" id="swapProvider" placeholder="the provider's pubky (they share this)" />
+    <div class="grid">
+      <div><label>Direction</label>
+        <select id="swapDirection">
+          <option value="reverse">Receive on-chain (Lightning → on-chain)</option>
+          <option value="submarine">Send on-chain (on-chain → Lightning)</option>
+        </select></div>
+      <div><label>Amount (sats)</label><input type="number" id="swapAmount" min="1" value="50000" /></div>
+    </div>
+    <div class="actions">
+      <button class="ghost" id="checkProvider">Check provider</button>
+      <button id="startSwap">Start swap</button>
+      <button class="ghost" id="cancelSwap" style="display:none">Cancel</button>
+      <span class="muted" id="swapNote"></span>
+    </div>
+    <div id="quoteBox" style="margin-top:10px"></div>
+    <pre id="swapLog" style="display:none;margin-top:10px"></pre>
+  </div>
+
+  <h2>Provider log</h2>
   <pre id="log">…</pre>
 </div>
 
@@ -170,6 +194,44 @@ $('disconnect').addEventListener('click', async () => {
   loadConfig(); refresh();
 });
 $('copyPubky').addEventListener('click', () => navigator.clipboard.writeText($('sPubky').textContent));
+
+// --- swap (taker) ---
+function swapInput() {
+  return {
+    provider: $('swapProvider').value.trim(),
+    direction: $('swapDirection').value,
+    amount: Number($('swapAmount').value),
+  };
+}
+$('checkProvider').addEventListener('click', async () => {
+  $('swapNote').textContent = 'Checking…'; $('quoteBox').innerHTML = '';
+  const res = await fetch('/api/quote', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(swapInput()) });
+  const j = await res.json();
+  if (!res.ok) { $('swapNote').textContent = '⚠ ' + (j.error || 'error'); return; }
+  $('swapNote').textContent = '';
+  if (!j.ok) { $('quoteBox').innerHTML = `<span class="badge b-bad">not available</span> <span class="muted">${j.error}</span>`; return; }
+  const q = j.quote;
+  $('quoteBox').innerHTML = `<span class="badge b-ok">live provider</span> <span class="muted">fee <b>${q.fee_sat}</b> sat · total <b>${q.total_sat}</b> sat · ${q.timeout_blocks}-block timeout · ${q.confirmations} conf</span>`;
+});
+$('startSwap').addEventListener('click', async () => {
+  if (!confirm('Start this swap? It moves real funds via your LND node.')) return;
+  $('swapNote').textContent = 'Starting…';
+  const res = await fetch('/api/swap', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(swapInput()) });
+  const j = await res.json();
+  if (!res.ok) { $('swapNote').textContent = '⚠ ' + (j.error || 'error'); return; }
+  $('swapNote').textContent = ''; $('swapLog').style.display = 'block';
+  pollSwap();
+});
+$('cancelSwap').addEventListener('click', async () => { await fetch('/api/swap-cancel', { method:'POST' }); pollSwap(); });
+async function pollSwap() {
+  let s; try { s = await (await fetch('/api/swap-status')).json(); } catch { return; }
+  $('cancelSwap').style.display = s.running ? 'inline' : 'none';
+  $('startSwap').disabled = s.running;
+  if ((s.log || []).length) { $('swapLog').style.display = 'block'; $('swapLog').textContent = s.log.join('\n'); }
+  if (s.running) { setTimeout(pollSwap, 2000); return; }
+  if (s.result) $('swapNote').textContent = s.result === 'success' ? '✅ swap complete' : '⚠ swap ' + s.result;
+}
+pollSwap();
 
 function badge(el, kind, text) { el.className = 'badge ' + kind; el.textContent = text; }
 async function refresh() {

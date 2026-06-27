@@ -16,6 +16,7 @@ const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 const IDENTITY_PATH = path.join(DATA_DIR, 'identity.pkarr');
 const SWAP_DATA_DIR = path.join(DATA_DIR, 'swap');
 const PROVIDER_BIN = process.env.SWAP_PROVIDER_BIN || '/usr/local/bin/swap-provider';
+const CLIENT_BIN = process.env.SWAP_CLIENT_BIN || '/usr/local/bin/swap-client';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 // Umbrel-provided connection details (see docker-compose.yml).
@@ -162,6 +163,101 @@ function stopProvider() {
   }
 }
 
+// --- taker: check a provider and swap as a client ---
+let swapChild = null;
+let lastSwapResult = null;
+const swapLog = [];
+function pushSwapLog(line) {
+  for (const l of String(line).split('\n')) {
+    if (!l.trim()) continue;
+    swapLog.push(l);
+    if (swapLog.length > LOG_MAX) swapLog.shift();
+  }
+}
+
+// Validate user-supplied swap inputs. Args are passed to spawn() as an array (no shell), so the
+// concern is well-formedness, not shell-injection.
+function validateSwapInput(body) {
+  const provider = String(body.provider || '').trim();
+  if (!/^[a-z0-9]{45,70}$/i.test(provider)) throw new Error('enter a valid provider pubky');
+  const direction = body.direction === 'submarine' ? 'submarine' : 'reverse';
+  const amount = Math.floor(Number(body.amount));
+  if (!Number.isFinite(amount) || amount < 1 || amount > 1e12) throw new Error('invalid amount');
+  return { provider, direction, amount };
+}
+
+function clientArgs(cfg, { provider, direction, amount, quoteOnly }) {
+  const args = [provider]; // positional: provider pubky
+  if (hasRecoveryFile()) args.push(IDENTITY_PATH); // positional: recovery file
+  else args.push('--recovery-phrase', cfg.pubkyRecoveryPhrase);
+  args.push(
+    '--network', NETWORK,
+    '--direction', direction,
+    '--amount', String(amount),
+    '--lnd-address', `https://${LND_IP}:${LND_GRPC_PORT}`,
+    '--lnd-cert', path.join(LND_DIR, 'tls.cert'),
+    '--lnd-macaroon', path.join(LND_DIR, 'data', 'chain', 'bitcoin', LND_NETWORK_DIR, 'admin.macaroon'),
+    '--electrum-url', `tcp://${ELECTRS_IP}:${ELECTRS_PORT}`,
+    '--wallet', 'lnd', // fund/claim via LND's own wallet
+  );
+  if (cfg.pubkyPassphrase) args.push('--pass', cfg.pubkyPassphrase);
+  if (quoteOnly) args.push('--quote-only');
+  return args;
+}
+
+function parseQuoteLine(text) {
+  const line = String(text).split('\n').find((l) => l.startsWith('QUOTE '));
+  if (!line) return null;
+  const out = {};
+  for (const kv of line.slice(6).trim().split(/\s+/)) {
+    const i = kv.indexOf('=');
+    if (i > 0) out[kv.slice(0, i)] = kv.slice(i + 1);
+  }
+  return out;
+}
+
+// Spawn the client in --quote-only mode: returns the parsed quote or throws (not a provider / no
+// response). Bounded by a timeout slightly above the client's 30s negotiation window.
+function checkProvider(cfg, input) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(CLIENT_BIN, clientArgs(cfg, { ...input, quoteOnly: true }), {
+      env: { ...process.env, RUST_LOG: 'info' },
+    });
+    let out = '';
+    const cap = (d) => { out += d.toString(); if (out.length > 1e5) out = out.slice(-1e5); };
+    proc.stdout.on('data', cap);
+    proc.stderr.on('data', cap);
+    const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 40000);
+    proc.on('error', (e) => { clearTimeout(timer); reject(new Error(`could not run client: ${e.message}`)); });
+    proc.on('exit', () => {
+      clearTimeout(timer);
+      const quote = parseQuoteLine(out);
+      if (quote) resolve(quote);
+      else reject(new Error('no quote — the pubky did not respond as a provider for this swap'));
+    });
+  });
+}
+
+function startSwap(cfg, input) {
+  swapLog.length = 0;
+  lastSwapResult = null;
+  pushSwapLog(`Starting ${input.direction} swap of ${input.amount} sat with ${input.provider}...`);
+  swapChild = spawn(CLIENT_BIN, clientArgs(cfg, { ...input, quoteOnly: false }), {
+    env: { ...process.env, RUST_LOG: process.env.RUST_LOG || 'info' },
+  });
+  swapChild.stdout.on('data', (d) => pushSwapLog(d.toString()));
+  swapChild.stderr.on('data', (d) => pushSwapLog(d.toString()));
+  swapChild.on('error', (e) => { pushSwapLog(`failed to start swap: ${e.message}`); swapChild = null; lastSwapResult = 'error'; });
+  swapChild.on('exit', (code) => {
+    pushSwapLog(`swap finished (exit code ${code})`);
+    lastSwapResult = code === 0 ? 'success' : 'failed';
+    swapChild = null;
+  });
+}
+function stopSwap() {
+  if (swapChild) { try { swapChild.kill('SIGTERM'); } catch {} swapChild = null; }
+}
+
 // --- status / config views (no secrets leaked) ---
 function statusView() {
   const cfg = loadConfig();
@@ -292,6 +388,27 @@ const server = http.createServer(async (req, res) => {
       if (isConfigured(cfg)) startProvider();
       return sendJson(res, 200, { ok: true, configured: isConfigured(cfg) });
     }
+    if (req.method === 'POST' && url.pathname === '/api/quote') {
+      const cfg = loadConfig();
+      if (!isConfigured(cfg)) return sendJson(res, 400, { error: 'load your Pubky identity first' });
+      let input;
+      try { input = validateSwapInput(await readBody(req)); } catch (e) { return sendJson(res, 400, { error: String(e.message || e) }); }
+      try { return sendJson(res, 200, { ok: true, quote: await checkProvider(cfg, input) }); }
+      catch (e) { return sendJson(res, 200, { ok: false, error: String(e.message || e) }); }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/swap') {
+      const cfg = loadConfig();
+      if (!isConfigured(cfg)) return sendJson(res, 400, { error: 'load your Pubky identity first' });
+      if (swapChild) return sendJson(res, 409, { error: 'a swap is already running' });
+      let input;
+      try { input = validateSwapInput(await readBody(req)); } catch (e) { return sendJson(res, 400, { error: String(e.message || e) }); }
+      startSwap(cfg, input);
+      return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/swap-status') {
+      return sendJson(res, 200, { running: Boolean(swapChild), result: lastSwapResult, log: swapLog.slice(-120) });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/swap-cancel') { stopSwap(); return sendJson(res, 200, { ok: true }); }
     if (req.method === 'POST' && url.pathname === '/api/control') {
       const body = await readBody(req);
       if (body.action === 'start' || body.action === 'restart') startProvider();
@@ -313,5 +430,5 @@ server.listen(PORT, () => {
   if (isConfigured(loadConfig())) startProvider();
 });
 
-process.on('SIGTERM', () => { stopProvider(); process.exit(0); });
-process.on('SIGINT', () => { stopProvider(); process.exit(0); });
+process.on('SIGTERM', () => { stopProvider(); stopSwap(); process.exit(0); });
+process.on('SIGINT', () => { stopProvider(); stopSwap(); process.exit(0); });

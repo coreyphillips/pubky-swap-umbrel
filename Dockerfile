@@ -11,8 +11,10 @@ ARG PUBKY_SWAP_REF=main
 
 WORKDIR /src
 RUN git clone --depth 1 --branch "${PUBKY_SWAP_REF}" "${PUBKY_SWAP_REPO}" .
-RUN cargo build --release -p swap-provider --features full
-RUN cp target/release/swap-provider /usr/local/bin/swap-provider
+# Build both the provider (advertise/serve swaps) and the client (swap as a taker).
+RUN cargo build --release -p swap-provider -p swap-client --features full
+RUN cp target/release/swap-provider /usr/local/bin/swap-provider \
+    && cp target/release/swap-client /usr/local/bin/swap-client
 
 # ---- Stage 2: Node control server + the provider binary ----
 FROM node:20-bookworm-slim
