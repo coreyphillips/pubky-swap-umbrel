@@ -68,9 +68,9 @@ digest, which cannot be known before the build publishes it.
 So a release is three steps:
 
 1. Merge the code, leaving `version` in `umbrel-app.yml` and the image line alone.
-2. Push a tag (`v0.2.0`). `build-image.yml` resolves `main` to a commit, publishes the multi-arch
-   image from it, and prints the exact `image:` line to use, digest included, alongside the
-   pubky-swap commit it was built from.
+2. Push a tag (`v0.2.0`). `build-image.yml` resolves `main` to a commit, builds each architecture
+   on a runner of that architecture, stitches them into one manifest list, and prints the exact
+   `image:` line to use, digest included, alongside the pubky-swap commit it was built from.
 3. Open a second PR bumping `version` and the image tag and digest together. That is the only
    commit that changes what Umbrel installs, and it cannot merge until the thing it names is real.
 
