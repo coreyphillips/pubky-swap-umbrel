@@ -1,434 +1,352 @@
 'use strict';
 
-// Pubky Swap — Umbrel control server.
+// Pubky Swap -- Umbrel control panel.
 //
-// Serves a small settings/status UI and supervises the `swap-provider` daemon: you load your Pubky,
-// set your rates, and save; this starts the provider against your Umbrel's LND + Electrs.
+// This file is wiring: environment, routes, listen, shut down. Everything with a decision in it
+// lives in web/lib.
+//
+// The shape worth knowing before reading: the panel does not learn about the daemon by reading its
+// logs. `swap-provider` serves a read-only status API on loopback, and lib/status-client polls it.
+// Upstream wrote that API because this app used to match regexes against stdout, "which works until
+// a message is reworded and then fails silently, reporting a healthy daemon or an unhealthy one
+// with equal confidence". Log lines are still ingested, but as something to read, not as a source
+// of truth -- with two exceptions, both about startup failures that happen before the API can bind,
+// and about the four real-money alarms that have no API equivalent.
 
 const http = require('http');
 const fs = require('fs');
-const path = require('path');
-const { spawn } = require('child_process');
+
+const paths = require('./lib/paths');
+const settings = require('./lib/settings');
+const secrets = require('./lib/secrets');
+const engine = require('./lib/engine');
+const doctor = require('./lib/doctor');
+const snapshot = require('./lib/snapshot');
+const { LogBuffer } = require('./lib/logbuf');
+const { Redactor } = require('./lib/redact');
+const { Notices } = require('./lib/notices');
+const { StatusClient } = require('./lib/status-client');
+const { Provider } = require('./lib/provider');
+const { Taker } = require('./lib/taker');
+const { Sse } = require('./lib/sse');
+const { createAccessGuard } = require('./lib/access');
+const {
+  httpError, sendJson, sendError, readBody, readJson, guardMutation, serveStatic, notFound,
+} = require('./lib/http');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
-const DATA_DIR = process.env.DATA_DIR || '/data';
-const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
-const IDENTITY_PATH = path.join(DATA_DIR, 'identity.pkarr');
-const SWAP_DATA_DIR = path.join(DATA_DIR, 'swap');
-const PROVIDER_BIN = process.env.SWAP_PROVIDER_BIN || '/usr/local/bin/swap-provider';
-const CLIENT_BIN = process.env.SWAP_CLIENT_BIN || '/usr/local/bin/swap-client';
-const PUBLIC_DIR = path.join(__dirname, 'public');
 
-// Umbrel-provided connection details (see docker-compose.yml).
-const LND_IP = process.env.LND_IP || '';
-const LND_GRPC_PORT = process.env.LND_GRPC_PORT || '10009';
-const LND_DIR = process.env.LND_DIR || '/lnd';
-const ELECTRS_IP = process.env.ELECTRS_IP || '';
-const ELECTRS_PORT = process.env.ELECTRS_PORT || '50001';
-const NETWORK = process.env.NETWORK || 'bitcoin';
+// --- wiring ------------------------------------------------------------------------------------
 
-// LND stores chain data under data/chain/bitcoin/<mainnet|testnet|signet|regtest>/.
-const LND_NETWORK_DIR = { bitcoin: 'mainnet', testnet: 'testnet', signet: 'signet', regtest: 'regtest' }[NETWORK] || 'mainnet';
+const notices = new Notices();
+const redactor = new Redactor();
+const sse = new Sse({ onCount: (n) => statusClient.setWatchers(n) });
 
-const DEFAULT_CONFIG = {
-  pubkyRecoveryPhrase: '',
-  pubkyPassphrase: '',
-  directions: 'submarine,reverse',
-  minAmount: 10000,
-  maxAmount: 1000000,
-  baseFee: 1000,
-  feePpm: 2000,
-  confirmations: 3,
-  onchainFeeRate: 5,
-  invoiceExpiry: 3600,
-  maxRoutingFeeMsat: 10000,
-  quoteTtl: 300,
-  broadcastOffer: false,
-  allowUnsafe: false,
-};
+const logs = new LogBuffer({
+  redactor,
+  onLines: (lines) => {
+    notices.scan(lines);
+    sse.broadcast('log', { source: 'provider', lines });
+  },
+});
 
-// --- config persistence ---
-function loadConfig() {
-  try {
-    return { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };
-  } catch {
-    return { ...DEFAULT_CONFIG };
-  }
-}
-function saveConfig(cfg) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = CONFIG_PATH + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: 0o600 });
-  fs.renameSync(tmp, CONFIG_PATH);
-}
-function hasRecoveryFile() {
-  return fs.existsSync(IDENTITY_PATH);
-}
-function isConfigured(cfg) {
-  // The funding wallet is LND's own on-chain wallet, so only a Pubky identity is needed — either a
-  // recovery phrase or an uploaded .pkarr recovery file.
-  return Boolean(cfg.pubkyRecoveryPhrase) || hasRecoveryFile();
+const statusClient = new StatusClient({ onChange: (name) => onStatusChange(name) });
+const provider = new Provider({ logs, statusClient, redactor, notices });
+const taker = new Taker({ logs, notices });
+
+let lastDoctor = null;
+let doctorRunning = false;
+
+function state() {
+  return snapshot.build({ provider, statusClient, taker, notices, health: lastDoctor });
 }
 
-// --- provider supervision ---
-let child = null;
-let providerPubky = '';
-let lndConnected = false;
-let executionCapable = false;
-const LOG_MAX = 300;
-const logBuf = [];
-
-function pushLog(line) {
-  for (const l of String(line).split('\n')) {
-    if (!l.trim()) continue;
-    logBuf.push(l);
-    if (logBuf.length > LOG_MAX) logBuf.shift();
-    parseLogLine(l);
-  }
-}
-function parseLogLine(l) {
-  let m = l.match(/Provider pubky:\s*(\S+)/);
-  if (m) providerPubky = m[1];
-  if (/Connected to LND node/.test(l)) lndConnected = true;
-  if (/Lightning backend not ready|network mismatch/.test(l)) lndConnected = false;
-  if (/execution-capable/.test(l)) executionCapable = true;
-  if (/negotiation-only/.test(l)) executionCapable = false;
+let broadcastQueued = false;
+function broadcast() {
+  if (broadcastQueued || !sse.count) return;
+  broadcastQueued = true;
+  // Coalesce: several status endpoints can land in the same tick, and a browser only needs the
+  // resulting state once.
+  setImmediate(() => { broadcastQueued = false; sse.broadcast('snapshot', state()); });
 }
 
-function providerArgs(cfg) {
-  // Identity: a .pkarr recovery file (positional arg) takes precedence over a recovery phrase.
-  const args = [];
-  if (hasRecoveryFile()) {
-    args.push(IDENTITY_PATH);
-  } else {
-    args.push('--recovery-phrase', cfg.pubkyRecoveryPhrase);
-  }
-  args.push(
-    '--network', NETWORK,
-    '--directions', cfg.directions,
-    '--min-amount', String(cfg.minAmount),
-    '--max-amount', String(cfg.maxAmount),
-    '--base-fee', String(cfg.baseFee),
-    '--fee-ppm', String(cfg.feePpm),
-    '--confirmations', String(cfg.confirmations),
-    '--onchain-fee-rate', String(cfg.onchainFeeRate),
-    '--invoice-expiry', String(cfg.invoiceExpiry),
-    '--max-routing-fee-msat', String(cfg.maxRoutingFeeMsat),
-    '--quote-ttl', String(cfg.quoteTtl),
-    '--lnd-address', `https://${LND_IP}:${LND_GRPC_PORT}`,
-    '--lnd-cert', path.join(LND_DIR, 'tls.cert'),
-    '--lnd-macaroon', path.join(LND_DIR, 'data', 'chain', 'bitcoin', LND_NETWORK_DIR, 'admin.macaroon'),
-    '--electrum-url', `tcp://${ELECTRS_IP}:${ELECTRS_PORT}`,
-    // Fund reverse-swap HTLCs from LND's own on-chain wallet (no separate seed).
-    '--wallet', 'lnd',
-    '--data-dir', SWAP_DATA_DIR,
-  );
-  if (cfg.pubkyPassphrase) args.push('--pass', cfg.pubkyPassphrase);
-  if (cfg.broadcastOffer) args.push('--broadcast-offer');
-  if (cfg.allowUnsafe) args.push('--allow-unsafe');
-  return args;
-}
+function onStatusChange() { broadcast(); }
 
-function startProvider() {
-  const cfg = loadConfig();
-  if (!isConfigured(cfg)) {
-    pushLog('Not configured yet — load your Pubky and set your rates, then Save.');
-    return;
-  }
-  stopProvider();
-  providerPubky = '';
-  lndConnected = false;
-  executionCapable = false;
-  fs.mkdirSync(SWAP_DATA_DIR, { recursive: true });
-  pushLog('Starting pubky-swap provider...');
-  child = spawn(PROVIDER_BIN, providerArgs(cfg), {
-    env: { ...process.env, RUST_LOG: process.env.RUST_LOG || 'info' },
-  });
-  child.stdout.on('data', (d) => pushLog(d.toString()));
-  child.stderr.on('data', (d) => pushLog(d.toString()));
-  // Without an 'error' listener a spawn failure (e.g. missing binary) would crash the server.
-  child.on('error', (e) => {
-    pushLog(`failed to start provider: ${e.message}`);
-    child = null;
-  });
-  child.on('exit', (code, sig) => {
-    pushLog(`provider exited (code=${code} signal=${sig || ''})`);
-    child = null;
-  });
-}
-function stopProvider() {
-  if (child) {
-    try { child.kill('SIGTERM'); } catch {}
-    child = null;
-  }
-}
+const allowRequest = createAccessGuard({ log: (m) => logs.note(m) });
 
-// --- taker: check a provider and swap as a client ---
-let swapChild = null;
-let lastSwapResult = null;
-const swapLog = [];
-function pushSwapLog(line) {
-  for (const l of String(line).split('\n')) {
-    if (!l.trim()) continue;
-    swapLog.push(l);
-    if (swapLog.length > LOG_MAX) swapLog.shift();
-  }
-}
+// --- routes ------------------------------------------------------------------------------------
 
-// Validate user-supplied swap inputs. Args are passed to spawn() as an array (no shell), so the
-// concern is well-formedness, not shell-injection.
+const routes = [
+  ['GET', '/api/bootstrap', async (req, res) => {
+    sendJson(res, 200, { ...state(), log: { provider: logs.tail(200), seq: logs.seq } });
+  }],
+
+  ['GET', '/api/state', async (req, res) => sendJson(res, 200, state())],
+
+  ['GET', '/api/stream', async (req, res) => { sse.subscribe(req, res, state()); }],
+
+  ['GET', '/api/logs', async (req, res, url) => {
+    const since = parseInt(url.searchParams.get('since') || '0', 10) || 0;
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '200', 10) || 200, 1000);
+    sendJson(res, 200, { seq: logs.seq, lines: logs.since(since, limit) });
+  }],
+
+  ['GET', '/api/diagnostics', async (req, res) => {
+    sendJson(res, 200, { report: lastDoctor, running: doctorRunning });
+  }],
+
+  ['POST', '/api/diagnostics/run', async (req, res) => {
+    guardMutation(req);
+    if (doctorRunning) throw httpError(409, 'BUSY', 'A check is already running.');
+    doctorRunning = true;
+    broadcast();
+    try { lastDoctor = await doctor.run(); }
+    finally { doctorRunning = false; }
+    broadcast();
+    sendJson(res, 200, { report: lastDoctor });
+  }],
+
+  ['POST', '/api/settings', async (req, res) => {
+    guardMutation(req);
+    const body = await readJson(req);
+    const saved = settings.apply(body);
+    // Saving rates does not restart the daemon. It has no reload signal, so a change only reaches
+    // the wire on a restart, and pretending otherwise would mean the panel showed rates nobody was
+    // being offered. The UI shows "advertising X, saved Y" and asks for the restart explicitly.
+    let restarted = false;
+    if (body.restart === true && provider.desired === 'running') {
+      await provider.restart();
+      restarted = true;
+    }
+    broadcast();
+    sendJson(res, 200, { ok: true, settings: saved, restarted });
+  }],
+
+  ['POST', '/api/identity/phrase', async (req, res) => {
+    guardMutation(req);
+    const { phrase } = await readJson(req);
+    secrets.writePhrase(phrase);
+    redactor.refresh();
+    broadcast();
+    sendJson(res, 200, { ok: true, identity: secrets.identityKind() });
+  }],
+
+  ['POST', '/api/identity/file', async (req, res) => {
+    guardMutation(req, { allowOctet: true });
+    // Raw bytes rather than base64 in JSON: half the size, and no decode step that quietly accepts
+    // garbage as an empty buffer.
+    const buf = await readBody(req, { limit: 256 * 1024 });
+    secrets.writeRecoveryFile(buf);
+    redactor.refresh();
+    broadcast();
+    sendJson(res, 200, { ok: true, identity: secrets.identityKind() });
+  }],
+
+  ['POST', '/api/identity/passphrase', async (req, res) => {
+    guardMutation(req);
+    const { passphrase } = await readJson(req);
+    secrets.writePassphrase(passphrase);
+    redactor.refresh();
+    broadcast();
+    sendJson(res, 200, { ok: true, hasPassphrase: secrets.hasPassphrase() });
+  }],
+
+  ['POST', '/api/identity/probe', async (req, res) => {
+    guardMutation(req);
+    sendJson(res, 200, await taker.probeIdentity());
+  }],
+
+  ['POST', '/api/identity/clear', async (req, res) => {
+    guardMutation(req);
+    await provider.stop();
+    secrets.clearAll();
+    try { fs.rmSync(paths.settings, { force: true }); } catch {}
+    settings.invalidate();
+    redactor.refresh();
+    logs.note('Identity and settings cleared. Swap records were kept.');
+    broadcast();
+    sendJson(res, 200, { ok: true });
+  }],
+
+  ['POST', '/api/provider/start', async (req, res) => {
+    guardMutation(req);
+    await provider.start();
+    broadcast();
+    sendJson(res, 200, { ok: true, provider: provider.view() });
+  }],
+
+  ['POST', '/api/provider/stop', async (req, res) => {
+    guardMutation(req);
+    // Deliberately not awaited: stopping allows the daemon twenty seconds to unwind its drivers
+    // cleanly, and an HTTP request should not hold a connection open for that. The stream reports
+    // the transition.
+    provider.stop().then(broadcast);
+    sendJson(res, 200, { ok: true, state: 'stopping' });
+  }],
+
+  ['POST', '/api/provider/restart', async (req, res) => {
+    guardMutation(req);
+    provider.restart().then(broadcast);
+    sendJson(res, 200, { ok: true, state: 'restarting' });
+  }],
+
+  ['POST', '/api/taker/quote', async (req, res) => {
+    guardMutation(req);
+    const input = validateSwapInput(await readJson(req));
+    try {
+      sendJson(res, 200, { ok: true, quote: await taker.quote(input) });
+    } catch (e) {
+      // A provider that does not answer is an outcome, not a server error: it needs to render as a
+      // readable message in the quote card, not as a failed request.
+      if (e.code === 'NO_QUOTE') return sendJson(res, 200, { ok: false, error: e.message, detail: e.remedy });
+      throw e;
+    }
+  }],
+
+  ['POST', '/api/taker/swap', async (req, res) => {
+    guardMutation(req);
+    const input = validateSwapInput(await readJson(req));
+    const started = await taker.startSwap(input);
+    broadcast();
+    sendJson(res, 200, { ok: true, ...started });
+  }],
+
+  ['POST', '/api/taker/cancel', async (req, res) => {
+    guardMutation(req);
+    const { force } = await readJson(req);
+    const result = await taker.cancel({ force: force === true });
+    broadcast();
+    sendJson(res, 200, { ok: true, ...result });
+  }],
+
+  ['POST', '/api/taker/resume', async (req, res) => {
+    guardMutation(req);
+    const started = await taker.resume();
+    broadcast();
+    sendJson(res, 200, { ok: true, ...started });
+  }],
+
+  ['POST', '/api/notices/ack', async (req, res) => {
+    guardMutation(req);
+    const { code } = await readJson(req);
+    notices.acknowledge(String(code || ''));
+    broadcast();
+    sendJson(res, 200, { ok: true });
+  }],
+];
+
+// Read-only shims, so a tab left open across an app update does not poll a 404 forever. Every
+// mutating route from the old API is gone rather than shimmed -- particularly
+// `POST /api/control {action:'clear'}`, which was reachable cross-site and wiped the identity.
+const LEGACY_READ = new Set(['/api/status', '/api/config']);
+const LEGACY_WRITE = new Set(['/api/config', '/api/quote', '/api/swap', '/api/swap-cancel', '/api/control']);
+
 function validateSwapInput(body) {
   const provider = String(body.provider || '').trim();
-  if (!/^[a-z0-9]{45,70}$/i.test(provider)) throw new Error('enter a valid provider pubky');
+  if (!/^[a-z0-9]{45,70}$/i.test(provider)) throw httpError(400, 'INVALID', 'That does not look like a provider pubky.');
   const direction = body.direction === 'submarine' ? 'submarine' : 'reverse';
   const amount = Math.floor(Number(body.amount));
-  if (!Number.isFinite(amount) || amount < 1 || amount > 1e12) throw new Error('invalid amount');
+  if (!Number.isFinite(amount) || amount < 1 || amount > 1e12) throw httpError(400, 'INVALID', 'Enter an amount in sats.');
   return { provider, direction, amount };
 }
 
-function clientArgs(cfg, { provider, direction, amount, quoteOnly }) {
-  const args = [provider]; // positional: provider pubky
-  if (hasRecoveryFile()) args.push(IDENTITY_PATH); // positional: recovery file
-  else args.push('--recovery-phrase', cfg.pubkyRecoveryPhrase);
-  args.push(
-    '--network', NETWORK,
-    '--direction', direction,
-    '--amount', String(amount),
-    '--lnd-address', `https://${LND_IP}:${LND_GRPC_PORT}`,
-    '--lnd-cert', path.join(LND_DIR, 'tls.cert'),
-    '--lnd-macaroon', path.join(LND_DIR, 'data', 'chain', 'bitcoin', LND_NETWORK_DIR, 'admin.macaroon'),
-    '--electrum-url', `tcp://${ELECTRS_IP}:${ELECTRS_PORT}`,
-    '--wallet', 'lnd', // fund/claim via LND's own wallet
-  );
-  if (cfg.pubkyPassphrase) args.push('--pass', cfg.pubkyPassphrase);
-  if (quoteOnly) args.push('--quote-only');
-  return args;
-}
-
-function parseQuoteLine(text) {
-  const line = String(text).split('\n').find((l) => l.startsWith('QUOTE '));
-  if (!line) return null;
-  const out = {};
-  for (const kv of line.slice(6).trim().split(/\s+/)) {
-    const i = kv.indexOf('=');
-    if (i > 0) out[kv.slice(0, i)] = kv.slice(i + 1);
-  }
-  return out;
-}
-
-// Spawn the client in --quote-only mode: returns the parsed quote or throws (not a provider / no
-// response). Bounded by a timeout slightly above the client's 30s negotiation window.
-function checkProvider(cfg, input) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(CLIENT_BIN, clientArgs(cfg, { ...input, quoteOnly: true }), {
-      env: { ...process.env, RUST_LOG: 'info' },
-    });
-    let out = '';
-    const cap = (d) => { out += d.toString(); if (out.length > 1e5) out = out.slice(-1e5); };
-    proc.stdout.on('data', cap);
-    proc.stderr.on('data', cap);
-    const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 40000);
-    proc.on('error', (e) => { clearTimeout(timer); reject(new Error(`could not run client: ${e.message}`)); });
-    proc.on('exit', () => {
-      clearTimeout(timer);
-      const quote = parseQuoteLine(out);
-      if (quote) resolve(quote);
-      else reject(new Error('no quote — the pubky did not respond as a provider for this swap'));
-    });
-  });
-}
-
-function startSwap(cfg, input) {
-  swapLog.length = 0;
-  lastSwapResult = null;
-  pushSwapLog(`Starting ${input.direction} swap of ${input.amount} sat with ${input.provider}...`);
-  swapChild = spawn(CLIENT_BIN, clientArgs(cfg, { ...input, quoteOnly: false }), {
-    env: { ...process.env, RUST_LOG: process.env.RUST_LOG || 'info' },
-  });
-  swapChild.stdout.on('data', (d) => pushSwapLog(d.toString()));
-  swapChild.stderr.on('data', (d) => pushSwapLog(d.toString()));
-  swapChild.on('error', (e) => { pushSwapLog(`failed to start swap: ${e.message}`); swapChild = null; lastSwapResult = 'error'; });
-  swapChild.on('exit', (code) => {
-    pushSwapLog(`swap finished (exit code ${code})`);
-    lastSwapResult = code === 0 ? 'success' : 'failed';
-    swapChild = null;
-  });
-}
-function stopSwap() {
-  if (swapChild) { try { swapChild.kill('SIGTERM'); } catch {} swapChild = null; }
-}
-
-// --- status / config views (no secrets leaked) ---
-function statusView() {
-  const cfg = loadConfig();
-  return {
-    configured: isConfigured(cfg),
-    running: Boolean(child),
-    pubky: providerPubky,
-    network: NETWORK,
-    lnd: { ip: LND_IP, port: LND_GRPC_PORT, connected: lndConnected },
-    electrs: { ip: ELECTRS_IP, port: ELECTRS_PORT },
-    executionCapable,
-    rates: {
-      directions: cfg.directions,
-      minAmount: cfg.minAmount,
-      maxAmount: cfg.maxAmount,
-      baseFee: cfg.baseFee,
-      feePpm: cfg.feePpm,
-    },
-    log: logBuf.slice(-120),
-  };
-}
-function configView() {
-  const cfg = loadConfig();
-  return {
-    network: NETWORK,
-    directions: cfg.directions,
-    minAmount: cfg.minAmount,
-    maxAmount: cfg.maxAmount,
-    baseFee: cfg.baseFee,
-    feePpm: cfg.feePpm,
-    confirmations: cfg.confirmations,
-    onchainFeeRate: cfg.onchainFeeRate,
-    invoiceExpiry: cfg.invoiceExpiry,
-    maxRoutingFeeMsat: cfg.maxRoutingFeeMsat,
-    quoteTtl: cfg.quoteTtl,
-    broadcastOffer: cfg.broadcastOffer,
-    allowUnsafe: cfg.allowUnsafe,
-    hasPubky: isConfigured(cfg),
-    identityType: hasRecoveryFile() ? 'file' : cfg.pubkyRecoveryPhrase ? 'phrase' : 'none',
-  };
-}
-
-/// Stop the provider and wipe the saved identity + config (a clean disconnect).
-function clearIdentity() {
-  stopProvider();
-  providerPubky = '';
-  lndConnected = false;
-  executionCapable = false;
-  try { fs.rmSync(CONFIG_PATH, { force: true }); } catch {}
-  try { fs.rmSync(IDENTITY_PATH, { force: true }); } catch {}
-  pushLog('Disconnected — identity and settings cleared.');
-}
-
-function applyConfig(body) {
-  const cfg = loadConfig();
-  // Identity: an uploaded .pkarr recovery file (base64) takes precedence and clears any phrase.
-  if (typeof body.pkarrBase64 === 'string' && body.pkarrBase64.trim()) {
-    const buf = Buffer.from(body.pkarrBase64, 'base64');
-    if (!buf.length) throw new Error('empty recovery file');
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(IDENTITY_PATH, buf, { mode: 0o600 });
-    cfg.pubkyRecoveryPhrase = '';
-  } else if (typeof body.pubkyRecoveryPhrase === 'string' && body.pubkyRecoveryPhrase.trim()) {
-    // A phrase supersedes a previously-uploaded file.
-    cfg.pubkyRecoveryPhrase = body.pubkyRecoveryPhrase.trim();
-    try { fs.rmSync(IDENTITY_PATH, { force: true }); } catch {}
-  }
-  // Secrets: only overwrite when a non-empty value is supplied (so re-saving doesn't wipe them).
-  if (typeof body.pubkyPassphrase === 'string') cfg.pubkyPassphrase = body.pubkyPassphrase;
-
-  const num = (k, min, max) => {
-    if (body[k] === undefined || body[k] === null || body[k] === '') return;
-    const v = Math.floor(Number(body[k]));
-    if (!Number.isFinite(v) || v < min || v > max) throw new Error(`invalid ${k}`);
-    cfg[k] = v;
-  };
-  num('minAmount', 1, 1e12);
-  num('maxAmount', 1, 1e12);
-  num('baseFee', 0, 1e9);
-  num('feePpm', 0, 1e7);
-  num('confirmations', 1, 100);
-  num('onchainFeeRate', 1, 1000);
-  num('invoiceExpiry', 60, 86400);
-  num('maxRoutingFeeMsat', 0, 1e12);
-  num('quoteTtl', 30, 86400);
-  if (typeof body.directions === 'string' && /^(submarine|reverse)(,(submarine|reverse))?$/.test(body.directions))
-    cfg.directions = body.directions;
-  if (typeof body.broadcastOffer === 'boolean') cfg.broadcastOffer = body.broadcastOffer;
-  if (typeof body.allowUnsafe === 'boolean') cfg.allowUnsafe = body.allowUnsafe;
-
-  if (cfg.maxAmount < cfg.minAmount) throw new Error('maxAmount must be >= minAmount');
-  saveConfig(cfg);
-  return cfg;
-}
-
-// --- tiny HTTP layer ---
-function sendJson(res, code, obj) {
-  const b = Buffer.from(JSON.stringify(obj));
-  res.writeHead(code, { 'Content-Type': 'application/json', 'Content-Length': b.length });
-  res.end(b);
-}
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let data = '';
-    req.on('data', (c) => { data += c; if (data.length > 1e6) req.destroy(); });
-    req.on('end', () => { try { resolve(data ? JSON.parse(data) : {}); } catch (e) { reject(e); } });
-    req.on('error', reject);
-  });
-}
-const CONTENT_TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
-function serveStatic(res, urlPath) {
-  const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
-  const file = path.normalize(path.join(PUBLIC_DIR, rel));
-  if (!file.startsWith(PUBLIC_DIR) || !fs.existsSync(file)) { res.writeHead(404); return res.end('not found'); }
-  res.writeHead(200, { 'Content-Type': CONTENT_TYPES[path.extname(file)] || 'application/octet-stream' });
-  fs.createReadStream(file).pipe(res);
-}
+// --- server ------------------------------------------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
+  let url;
+  try { url = new URL(req.url, 'http://localhost'); } catch { return notFound(res); }
+  const path = url.pathname;
+
   try {
-    const url = new URL(req.url, 'http://localhost');
-    if (req.method === 'GET' && url.pathname === '/api/status') return sendJson(res, 200, statusView());
-    if (req.method === 'GET' && url.pathname === '/api/config') return sendJson(res, 200, configView());
-    if (req.method === 'POST' && url.pathname === '/api/config') {
-      const body = await readBody(req);
-      let cfg;
-      try { cfg = applyConfig(body); } catch (e) { return sendJson(res, 400, { error: String(e.message || e) }); }
-      if (isConfigured(cfg)) startProvider();
-      return sendJson(res, 200, { ok: true, configured: isConfigured(cfg) });
+    if (path.startsWith('/api/')) {
+      if (!allowRequest(req)) return sendError(res, httpError(403, 'FORBIDDEN', 'Forbidden.'));
+
+      if (req.method === 'POST' && LEGACY_WRITE.has(path)) {
+        return sendError(res, httpError(410, 'GONE', 'This endpoint has moved. Reload the page.'));
+      }
+      if (req.method === 'GET' && LEGACY_READ.has(path)) {
+        return sendJson(res, 200, legacyView(path));
+      }
+
+      const route = routes.find(([method, p]) => method === req.method && p === path);
+      if (!route) return sendError(res, httpError(404, 'NOT_FOUND', 'No such endpoint.'));
+      return await route[2](req, res, url);
     }
-    if (req.method === 'POST' && url.pathname === '/api/quote') {
-      const cfg = loadConfig();
-      if (!isConfigured(cfg)) return sendJson(res, 400, { error: 'load your Pubky identity first' });
-      let input;
-      try { input = validateSwapInput(await readBody(req)); } catch (e) { return sendJson(res, 400, { error: String(e.message || e) }); }
-      try { return sendJson(res, 200, { ok: true, quote: await checkProvider(cfg, input) }); }
-      catch (e) { return sendJson(res, 200, { ok: false, error: String(e.message || e) }); }
-    }
-    if (req.method === 'POST' && url.pathname === '/api/swap') {
-      const cfg = loadConfig();
-      if (!isConfigured(cfg)) return sendJson(res, 400, { error: 'load your Pubky identity first' });
-      if (swapChild) return sendJson(res, 409, { error: 'a swap is already running' });
-      let input;
-      try { input = validateSwapInput(await readBody(req)); } catch (e) { return sendJson(res, 400, { error: String(e.message || e) }); }
-      startSwap(cfg, input);
-      return sendJson(res, 200, { ok: true });
-    }
-    if (req.method === 'GET' && url.pathname === '/api/swap-status') {
-      return sendJson(res, 200, { running: Boolean(swapChild), result: lastSwapResult, log: swapLog.slice(-120) });
-    }
-    if (req.method === 'POST' && url.pathname === '/api/swap-cancel') { stopSwap(); return sendJson(res, 200, { ok: true }); }
-    if (req.method === 'POST' && url.pathname === '/api/control') {
-      const body = await readBody(req);
-      if (body.action === 'start' || body.action === 'restart') startProvider();
-      else if (body.action === 'stop') stopProvider();
-      else if (body.action === 'clear') clearIdentity();
-      else return sendJson(res, 400, { error: 'unknown action' });
-      return sendJson(res, 200, { ok: true });
-    }
-    if (req.method === 'GET') return serveStatic(res, url.pathname);
-    res.writeHead(405); res.end('method not allowed');
+
+    if (req.method === 'GET' || req.method === 'HEAD') return serveStatic(req, res, path);
+    return sendError(res, httpError(405, 'INVALID', 'Method not allowed.'));
   } catch (e) {
-    sendJson(res, 500, { error: String(e.message || e) });
+    if (!res.headersSent) sendError(res, e);
+    else res.destroy();
   }
 });
 
-server.listen(PORT, () => {
-  pushLog(`Pubky Swap control panel on :${PORT}`);
-  // Auto-start the provider if we're already configured (e.g. after a restart).
-  if (isConfigured(loadConfig())) startProvider();
-});
+/** Just enough of the old shape for a stale tab to notice it should reload. */
+function legacyView(path) {
+  const s = state();
+  if (path === '/api/config') {
+    return { ...s.settings, hasPubky: s.setup.configured, identityType: s.setup.identity, outdated: true };
+  }
+  return {
+    configured: s.setup.configured,
+    running: s.provider.running,
+    pubky: s.provider.pubky || '',
+    network: s.env.network,
+    outdated: true,
+    log: ['This panel has been updated. Reload the page.'],
+  };
+}
 
-process.on('SIGTERM', () => { stopProvider(); stopSwap(); process.exit(0); });
-process.on('SIGINT', () => { stopProvider(); stopSwap(); process.exit(0); });
+// Node defaults requestTimeout to 300s, which would silently cut every SSE stream at five minutes.
+server.requestTimeout = 0;
+server.headersTimeout = 60000;
+
+async function bootstrap() {
+  fs.mkdirSync(paths.dataDir, { recursive: true });
+  const migrated = settings.migrateLegacy();
+  if (migrated) notices.raise(migrated);
+  redactor.refresh();
+
+  logs.note(`Pubky Swap control panel on port ${PORT} (network ${engine.NETWORK}).`);
+
+  // Before anything can start a new swap: records left outside the volume by an older build hold
+  // the only key that can recover the funds in them.
+  const rescued = taker.rescueStranded();
+  if (rescued) logs.note(`Recovered ${rescued} swap record(s) from outside the data volume.`, 'WARN');
+
+  const cfg = settings.load();
+  const open = taker.unfinished();
+  if (open.length) {
+    logs.note(`${open.length} swap(s) from an earlier run are unfinished; driving them.`, 'WARN');
+    taker.resume().catch(() => {});
+  }
+
+  // A taker-only install never starts a provider. The old panel had no notion of a role, so anyone
+  // who only wanted to swap their own funds still ended up advertising to the network.
+  if (secrets.isConfigured() && cfg.role !== 'taker') {
+    provider.start().then(broadcast);
+  } else if (!secrets.isConfigured()) {
+    logs.note('No identity loaded yet. Open the panel to finish setup.');
+  }
+
+  server.listen(PORT, () => logs.note('Ready.'));
+}
+
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  server.close();
+  sse.closeAll();
+  statusClient.stop();
+  await Promise.race([
+    Promise.all([provider.stop(), taker.cancel({ force: true }).catch(() => {})]),
+    new Promise((r) => setTimeout(r, 25000)),
+  ]);
+  process.exit(0);
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+bootstrap();
