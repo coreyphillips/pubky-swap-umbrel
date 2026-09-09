@@ -2,7 +2,7 @@ manifestVersion: 1
 id: pubky-swap
 category: bitcoin
 name: Pubky Swap
-version: "0.1.2"
+version: "0.1.1"
 tagline: Run a self-hosted Lightning to on-chain swap provider on your own node
 icon: https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/icon.svg
 gallery:
@@ -39,12 +39,6 @@ dependencies:
   - lightning
   - electrs
 releaseNotes: >-
-  Works with Fulcrum and ElectrumX as well as Electrs. The port is now taken from whichever one
-  Umbrel points the app at, rather than assumed: Electrs listens on 50001 and Fulcrum on 50002,
-  so the assumption connected to one and quietly failed with the other.
-
-
-  Previously:
   First release. The app installs from a published multi-arch image rather than compiling on your
   node.
 
