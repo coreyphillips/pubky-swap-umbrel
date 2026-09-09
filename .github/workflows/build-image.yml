@@ -106,10 +106,15 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,scope=${{ matrix.arch }},mode=max
 
+      # The digest travels as a filename, minus its `sha256:` prefix: upload-artifact rejects a
+      # colon in a path, and the merge job puts the prefix back.
       - name: Hand the digest to the merge job
         run: |
+          set -euo pipefail
           mkdir -p /tmp/digests
-          touch "/tmp/digests/${{ steps.push.outputs.digest }}"
+          touch "/tmp/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
       - uses: actions/upload-artifact@v4
         with:
           name: digest-${{ matrix.arch }}
@@ -139,6 +144,8 @@ jobs:
         working-directory: /tmp/digests
         run: |
           set -euo pipefail
+          # One argument per architecture, each `<image>@sha256:<digest>`.
+          ls -1
           docker buildx imagetools create \
             -t "${IMAGE}:${{ needs.meta.outputs.version }}" \
             -t "${IMAGE}:latest" \

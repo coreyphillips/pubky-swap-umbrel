@@ -27,8 +27,11 @@ Then install **Pubky Swap** from the Pubky store that appears.
 
 It is a small web control panel that supervises the `swap-provider` daemon.
 
-1. Open the app and load your **Pubky identity**: paste a recovery phrase, or upload a `.pkarr`
-   recovery file.
+1. Open the app and load your **Pubky identity**: paste its recovery phrase, or upload its
+   `.pkarr` recovery file. It has to be an identity that already exists, created in
+   [Pubky Ring or pubky.app](https://pubky.app): the app signs in to your identity's homeserver
+   and cannot create one, so a phrase you make up has no account behind it and the provider will
+   not start.
 2. Set your **fees, amount limits and exposure limits**.
 3. Save. The provider starts, advertises your offer, and serves swaps against your LND and Electrs.
 4. Share the **Pubky it prints** with anyone who wants to swap with you.

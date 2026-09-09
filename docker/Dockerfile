@@ -28,7 +28,13 @@ RUN git init -q . \
 # `full` is LND + Electrum + the BDK funding wallet + the status API the dashboard reads.
 # `beignet` is built in too, so an operator can point the provider at a beignet daemon instead of
 # LND without needing a different image.
-RUN cargo build --release -p swap-provider -p swap-client --features full,beignet \
+#
+# `iroh` is the doorbell, and without it the app's whole discovery story does not work. Pubky's
+# encrypted DMs live at a path derived from an ECDH shared secret, which is what makes them
+# unlinkable and also means a recipient cannot enumerate who has written to them: the provider
+# polls only pubkys it already knows. A stranger handed the provider's pubky sends a quote request
+# into a mailbox nobody opens. The rendezvous is how they announce themselves first.
+RUN cargo build --release -p swap-provider -p swap-client --features full,beignet,iroh \
     && cp target/release/swap-provider /usr/local/bin/swap-provider \
     && cp target/release/swap-client /usr/local/bin/swap-client \
     && strip /usr/local/bin/swap-provider /usr/local/bin/swap-client
