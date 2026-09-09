@@ -46,6 +46,17 @@ app's own data volume, readable only by the app, and the daemon is told the path
 value. Anything that can read the process table on a node can read a process's arguments, so a
 seed passed as one is a seed shared with every other app on the box.
 
+**Another app on your Umbrel cannot change your settings.** Every app on an Umbrel shares one
+Docker network, so any of them can reach this app's port. The guard here used to accept the whole
+private range, which is every one of them: I put two of these containers on a network and had the
+second POST `{"action":"clear"}` at the first, and the first app's Pubky identity was gone.
+
+Changes are now accepted only from loopback and the gateway umbrelOS proxies through, which is not
+an address another container can present as its own. Reading is deliberately left open: the status
+view holds no secret, and gating it would mean that if the allow list were ever wrong you would
+meet a blank page instead of the message telling you what to fix. Set `CONTROL_PLANE_ALLOW` on the
+container if your setup proxies from somewhere else; the app names the address for you.
+
 **The dashboard asks the daemon, it does not read its logs.** The provider serves a read-only
 status API on loopback, and the panel calls it. Deciding whether a daemon is healthy by matching
 patterns against its log output works until a message is reworded, and then fails quietly in
