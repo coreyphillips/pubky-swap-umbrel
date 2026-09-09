@@ -483,11 +483,19 @@ function lastMatch(text, re) {
 }
 
 function identityFailureMessage(stdout, code) {
+  // A Pubky identity has to already exist on a homeserver: the engine signs in, and nothing in
+  // this stack can sign up. So the overwhelmingly likely cause of a 404 here is a phrase that was
+  // generated but never registered, and saying "check your network" would send someone looking in
+  // the wrong place entirely.
+  if (/sign in/i.test(stdout) && /404|Not Found/i.test(stdout)) {
+    return 'That identity has no homeserver account yet. A Pubky identity has to be created in a ' +
+      'Pubky app first; this app can sign in with one but cannot create one.';
+  }
   const refusal = refusalFrom(stdout);
   if (refusal) return refusal;
   if (/sign in/i.test(stdout)) {
-    return 'That identity could not sign in to its homeserver. This is usually the homeserver or ' +
-      'the network, not your phrase.';
+    return 'That identity could not sign in to its homeserver. Check that the phrase and ' +
+      'passphrase are the ones you used to create it, and that this node has internet access.';
   }
   if (code === null) return 'Checking the identity took too long and was stopped.';
   return 'That identity could not be loaded.';

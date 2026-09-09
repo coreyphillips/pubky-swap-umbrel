@@ -53,6 +53,8 @@ function project(record) {
     funding,
     spend: record.spend_txid_hex ? String(record.spend_txid_hex) : null,
     reorg_seen_at_height: record.reorg_seen_at_height == null ? null : num(record.reorg_seen_at_height),
+    // Zero on a record written before the engine stamped a creation time, which reads as unknown.
+    created_at_unix: num(record.created_at_unix),
     last_error: record.last_error == null ? null : String(record.last_error),
     updated_at_unix: num(record.updated_at_unix),
   };

@@ -1,0 +1,35 @@
+# Local testing, outside Umbrel.
+#
+# A standalone file rather than an override: the real compose declares Umbrel's `app_proxy`, which
+# umbrelOS provides and which has no image anywhere else, so that file cannot be brought up on a
+# development machine at all.
+#
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# Point it at whatever LND and Electrs you are testing against. For regtest, pubky-swap ships
+# docker-compose.regtest.yml and scripts/setup-regtest-lnd.sh; both take container-name and port
+# overrides so they can run alongside an existing stack.
+
+services:
+  server:
+    build: .
+    image: pubky-swap:dev
+    init: true
+    stop_grace_period: 1m
+    ports:
+      # Published directly, with no proxy and therefore no authentication. Local testing only.
+      - "3737:3000"
+    environment:
+      PORT: 3000
+      LND_IP: ${LND_IP:-127.0.0.1}
+      LND_GRPC_PORT: ${LND_GRPC_PORT:-10011}
+      LND_DIR: /lnd
+      ELECTRS_IP: ${ELECTRS_IP:-127.0.0.1}
+      ELECTRS_PORT: ${ELECTRS_PORT:-60001}
+      NETWORK: ${NETWORK:-regtest}
+      STATUS_PORT: 9788
+      # The source guard expects Umbrel's app_proxy to resolve; there is none here.
+      PUBKY_SWAP_TRUST_ALL: "1"
+    volumes:
+      - ${LND_DATA_DIR:-./.devdata/lnd}:/lnd:ro
+      - ./.devdata/data:/data

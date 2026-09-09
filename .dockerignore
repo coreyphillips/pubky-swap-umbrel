@@ -1,0 +1,9 @@
+.git
+.github
+.idea
+.DS_Store
+node_modules
+**/node_modules
+*.md
+!README.md
+.appdata

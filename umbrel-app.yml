@@ -2,25 +2,30 @@ manifestVersion: 1
 id: pubky-swap
 category: lightning
 name: Pubky Swap
-version: "0.1.0"
-tagline: Run a self-hosted Lightning↔on-chain swap provider on your own node
+version: "0.2.0"
+tagline: Earn fees swapping Lightning and on-chain bitcoin on your own node
 icon: https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/icon.svg
 port: 3737
 description: >-
   Turn your node into a **decentralized Lightning swap provider.** Pubky Swap advertises submarine
-  (on-chain → Lightning) and reverse (Lightning → on-chain) swaps at the rates you set, and
-  facilitates them using **your Umbrel's own LND node and Electrs** — there is no central swap
-  server. Discovery and negotiation ride on the Pubky network.
+  (on-chain to Lightning) and reverse (Lightning to on-chain) swaps at the rates you set, and
+  facilitates them using **your Umbrel's own LND node and Electrs**. There is no central swap
+  server; discovery and negotiation ride on the Pubky network.
 
 
-  Just load your Pubky identity, set your fee rate and limits, and save — the provider starts
-  advertising and serving swaps. Share the Pubky it prints with anyone who wants to swap with you.
+  Load a Pubky identity, set your rates, and the guided setup checks your node before anything
+  starts. Share the pubky it gives you with anyone who wants to swap with you. You can also use it
+  the other way round: paste someone else's pubky and swap your own funds, without advertising
+  anything.
 
 
-  ⚠️ EARLY SOFTWARE — NOT YET AUDITED. The swap engine is implemented and tested (including
-  end-to-end on regtest against real LND), but it has not had a third-party security review and
-  mainnet hardening is ongoing. Atomic-swap bugs can lose funds. Start small and only risk what you
-  can afford to lose.
+  Reverse swaps are funded from LND's own on-chain balance, so there is no second seed to back up.
+  Just keep some on-chain liquidity in LND.
+
+
+  ⚠️ EARLY SOFTWARE, NOT YET AUDITED. The swap engine is implemented and tested, including end to
+  end on regtest against real LND, but it has not had a third-party security review. A bug in an
+  atomic swap can lose money. Start small and only risk what you can afford to lose.
 developer: Corey Phillips
 website: https://github.com/coreyphillips/pubky-swap
 submitter: Corey Phillips
@@ -31,8 +36,24 @@ dependencies:
   - lightning
   - electrs
 releaseNotes: >-
-  Initial release. Web UI to load your Pubky, set swap rates/limits, and run a provider against your
-  Umbrel's LND + Electrs. Submarine and reverse swaps supported.
+  A rebuilt control panel, and the fixes it took to make one worth building.
+
+
+  The app could not start at all against a current swap engine: it passed two flags that had been
+  removed on purpose, because a value on a command line is readable by anything that can see the
+  process table. Secrets now live in owner-only files and the engine is told where they are, never
+  what they say. An existing plaintext config is migrated and removed on first start.
+
+
+  Your own swaps were writing their records inside the container instead of onto the app's volume.
+  A submarine swap's refund key is generated there and exists nowhere else, so losing it makes the
+  coins unspendable by anyone. Records left behind by the old build are recovered on start.
+
+
+  The panel is now tabs: what your node is doing, what you have earned, swapping your own funds,
+  every swap you have been part of, and settings. Everything it reports comes from the engine's own
+  status API rather than from reading its logs. Setup asks what you want to use this for before
+  anything else, so choosing to swap your own funds no longer starts you advertising to the network.
 path: ""
 defaultUsername: ""
 defaultPassword: ""

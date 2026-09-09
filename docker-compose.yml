@@ -1,38 +1,61 @@
-# Pubky Swap — Umbrel app.
+# Pubky Swap -- Umbrel app.
 #
 # Runs a pubky-swap provider against your Umbrel's existing LND ("lightning") and Electrs
-# ("electrs") apps (declared as dependencies in umbrel-app.yml). Umbrel injects the connection
-# details for those apps as the APP_LIGHTNING_* / APP_ELECTRS_* variables used below.
+# ("electrs") apps, declared as dependencies in umbrel-app.yml. Umbrel injects the connection
+# details for those apps as the APP_* variables used below.
 #
-# For local testing: `docker compose up -d --build` (provide the APP_* vars, see README.md).
-# For the Umbrel store: publish a multi-arch image and replace `build: .` with `image: ...`.
+# For local testing: `docker compose up -d --build`, supplying the APP_* vars. See README.md.
 
 services:
+  # Umbrel's proxy, which fronts the panel with the OS single sign-on. Without it the panel is
+  # published on the LAN with no authentication at all, on an app that can move funds.
+  app_proxy:
+    environment:
+      # Pinned rather than derived: compose v1 names containers x_y_1 and v2 names them x-y-1, and
+      # app_proxy blocks forever in its wait-for-port loop if this name does not resolve.
+      APP_HOST: pubky-swap_server_1
+      APP_PORT: 3000
+
   server:
     build: .
     image: pubky-swap:latest
+    container_name: pubky-swap_server_1
     restart: on-failure
+    # PID 1 that reaps: the server supervises two long-lived child processes.
+    init: true
+    # The provider is given twenty seconds to unwind its swap drivers cleanly on shutdown.
     stop_grace_period: 1m
-    ports:
-      - "3737:3000" # host 3737 (umbrel-app.yml `port`) -> control panel
+    expose:
+      - "3000"
     environment:
       PORT: 3000
 
       # --- Your Umbrel's LND node (dependency: lightning) ---
       LND_IP: ${APP_LIGHTNING_NODE_IP}
       LND_GRPC_PORT: ${APP_LIGHTNING_NODE_GRPC_PORT:-10009}
-      # The LND data dir is mounted read-only at /lnd; tls.cert + admin.macaroon are read from there.
+      # The LND data dir is mounted read-only at /lnd; tls.cert and admin.macaroon are read there.
       LND_DIR: /lnd
 
       # --- Your Umbrel's Electrs (dependency: electrs) ---
       ELECTRS_IP: ${APP_ELECTRS_NODE_IP}
-      ELECTRS_PORT: "50001"
+      ELECTRS_PORT: ${APP_ELECTRS_NODE_PORT:-50001}
 
-      # Bitcoin network your node runs on (Umbrel default is mainnet).
+      # The engine spells mainnet "bitcoin", while Umbrel exports "mainnet", so the two do not map
+      # directly. Left explicit rather than derived: getting this wrong silently would mean running
+      # mainnet parameters against a test chain, or the reverse.
       NETWORK: bitcoin
 
+      # The provider's read-only status API, on loopback inside this container. Not published.
+      STATUS_PORT: 9788
+
     volumes:
-      # LND credentials (tls.cert + macaroons), read-only.
+      # LND credentials (tls.cert and macaroons), read-only.
       - ${APP_LIGHTNING_NODE_DATA_DIR}:/lnd:ro
-      # Persistent app state: your saved config + identity + in-flight swap records.
+      # Persistent state: settings, secrets, and in-flight swap records. The records under
+      # data/client/swaps hold the only keys that can recover funds from an unfinished swap.
       - ${APP_DATA_DIR}/data:/data
+
+networks:
+  default:
+    name: umbrel_main_network
+    external: true

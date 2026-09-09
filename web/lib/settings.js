@@ -41,7 +41,12 @@ const DEFAULTS = {
   confirmations: IS_MAINNET ? 2 : 1,
   onchainFeeRate: IS_MAINNET ? 5 : 2,
   timeoutBlocks: 144,
-  invoiceExpiry: 3600,
+  // Long enough that the counterparty's own invoice check passes. A client refuses a hold invoice
+  // that lapses before it could see the funding confirm and still have its claim window, and it
+  // applies its own confirmation floor, so the requirement tops out at (12 + 18) blocks. The
+  // engine's own default of an hour is well under that; the engine now raises it, and this default
+  // matches, so the number shown in the panel is the number in force.
+  invoiceExpiry: 18000,
   maxRoutingFeeMsat: 10000,
   quoteTtl: 300,
   broadcastOffer: false,

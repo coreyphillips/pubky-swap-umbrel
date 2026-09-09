@@ -190,6 +190,9 @@ function identityStep(advance, snap) {
 
   return c.card({ title: 'Your Pubky identity' },
     el('p.muted', { text: 'This is how other people find you. It is the same recovery phrase or .pkarr file you would use in any other Pubky app.' }),
+    // Worth saying before someone pastes a freshly generated phrase and gets a 404 they cannot
+    // interpret: this app signs in to a Pubky identity, it does not create one.
+    el('p.small.faint', { text: 'It has to be an identity that already exists. This app can sign in with one but cannot create one, so generate it in a Pubky app first.' }),
     picker,
     el('div', { style: { 'margin-top': 'var(--s-3)' } }, phrasePane, filePane),
     c.field({ label: 'Passphrase (optional)', control: passphrase, hint: 'Leave blank unless your phrase or file was made with one. A wrong passphrase does not fail; it quietly gives you a different identity.' }),

@@ -131,7 +131,10 @@ function advancedCard(snap) {
     label: 'On-chain fee floor', value: s.onchainFeeRate, min: 1, max: 1000, unit: 'sat/vB',
     hint: 'The lowest rate this node will price claims and refunds at.',
   });
-  const invoiceExpiry = c.numberField({ label: 'Hold invoice expiry', value: s.invoiceExpiry, min: 60, max: 86400, unit: 's' });
+  const invoiceExpiry = c.numberField({
+    label: 'Hold invoice expiry', value: s.invoiceExpiry, min: 60, max: 86400, unit: 's',
+    hint: 'Raised automatically if it is shorter than the counterparty will accept, which is about five hours.',
+  });
   const routingFee = c.numberField({ label: 'Routing fee cap', value: s.maxRoutingFeeMsat, min: 0, max: 1e12, unit: 'msat' });
   const quoteTtl = c.numberField({ label: 'Quote lifetime', value: s.quoteTtl, min: 30, max: 3600, unit: 's' });
   const timeoutBlocks = c.numberField({

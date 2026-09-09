@@ -229,6 +229,10 @@ function detailModal(swap, snap) {
           // Shown even on a healthy swap, and labelled: it is the *last* error, not necessarily the
           // reason for anything.
           ['Last error', swap.last_error ? `${swap.last_error}${['claimed'].includes(swap.state) ? ' (recovered)' : ''}` : null],
+          ['Started', swap.created_at_unix ? fmt.absTime(swap.created_at_unix) : null],
+          ['Took', swap.created_at_unix && swap.updated_at_unix > swap.created_at_unix
+            ? fmt.duration(swap.updated_at_unix - swap.created_at_unix)
+            : null],
           ['Updated', `${fmt.relTime(swap.updated_at_unix)} · ${fmt.absTime(swap.updated_at_unix)}`],
           ['Technical', `${swap.direction} swap, as the ${swap.role === 'client' ? 'taker' : 'provider'}`],
         ]))),
