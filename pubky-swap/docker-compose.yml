@@ -44,18 +44,17 @@ services:
       # from there rather than copied, so a credential rotation is picked up on restart.
       LND_DIR: /lnd
 
-      # --- Your Umbrel's Electrum server (dependency: electrs) ---
+      # --- Your Electrum server ---
       #
-      # Electrs, Fulcrum and ElectrumX all satisfy this: Fulcrum and ElectrumX declare
-      # `implements: electrs`, and their exports.sh re-exports their own address and port as
-      # APP_ELECTRS_NODE_IP and APP_ELECTRS_NODE_PORT. So whichever one is installed, these two
-      # variables point at it.
+      # Chosen in the app rather than declared as a dependency, so Electrs, Fulcrum, ElectrumX and
+      # a server somewhere else all work and none of them is required to install. The app offers
+      # the Umbrel ones as one-click presets at their fixed addresses.
       #
-      # The port has to come from the variable rather than be written here. They do not agree:
-      # electrs listens on 50001 and Fulcrum on 50002, so a hardcoded 50001 works with one and
-      # silently fails to connect with the other.
-      ELECTRS_IP: ${APP_ELECTRS_NODE_IP}
-      ELECTRS_PORT: ${APP_ELECTRS_NODE_PORT:-50001}
+      # These only seed the default on first run, and are normally empty: Umbrel injects an app's
+      # exported variables only into apps that declare a dependency on it, and this one
+      # deliberately does not.
+      ELECTRS_IP: ${APP_ELECTRS_NODE_IP:-}
+      ELECTRS_PORT: ${APP_ELECTRS_NODE_PORT:-}
 
       # The chain your node runs on. Umbrel exports this; mainnet is its default.
       NETWORK: ${APP_BITCOIN_NETWORK:-mainnet}

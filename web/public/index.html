@@ -59,7 +59,7 @@
       <span class="v"><span id="sPubky">—</span> <span class="copy" id="copyPubky" style="display:none">copy</span></span></div>
     <div class="row"><span class="k">Network</span><span class="v" id="sNetwork">—</span></div>
     <div class="row"><span class="k">LND</span><span class="v" id="sLnd">—</span></div>
-    <div class="row"><span class="k">Electrs</span><span class="v" id="sElectrs">—</span></div>
+    <div class="row"><span class="k">Electrum server</span><span class="v" id="sElectrs">—</span></div>
     <div class="row"><span class="k">Advertised fee</span><span class="v" id="sFee">—</span></div>
     <div class="row"><span class="k">In flight</span><span class="v" id="sInFlight">—</span></div>
     <div class="row"><span class="k">Committed</span><span class="v" id="sCommitted">—</span></div>
@@ -93,6 +93,16 @@
     <div class="muted" style="margin:8px 0 2px">💡 Reverse swaps are funded directly from your node's
       own <b>LND on-chain balance</b> — there's no separate wallet to set up or back up. Just keep
       some on-chain liquidity in LND.</div>
+
+    <h2 style="margin-top:18px">Electrum server</h2>
+    <div class="muted" style="margin:2px 0 8px">Where this app watches the chain. Any Electrum
+      server works: Electrs, Fulcrum, ElectrumX, or one elsewhere. Pick the app you have
+      installed.</div>
+    <div class="actions" id="electrumPresets" style="margin:0 0 10px"></div>
+    <div class="grid">
+      <div><label>Host</label><input type="text" id="electrumHost" placeholder="10.21.21.10" /></div>
+      <div><label>Port</label><input type="number" id="electrumPort" min="1" max="65535" /></div>
+    </div>
 
     <h2 style="margin-top:18px">Rates &amp; limits</h2>
     <div class="grid">
@@ -160,7 +170,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const fields = ['directions','baseFee','feePpm','minAmount','maxAmount','confirmations','onchainFeeRate','invoiceExpiry','maxRoutingFeeMsat','quoteTtl'];
+const fields = ['directions','baseFee','feePpm','minAmount','maxAmount','confirmations','onchainFeeRate','invoiceExpiry','maxRoutingFeeMsat','quoteTtl','electrumHost','electrumPort'];
 
 async function loadConfig() {
   const c = await (await fetch('/api/config')).json();
@@ -173,7 +183,27 @@ async function loadConfig() {
   $('pubkyRecoveryPhrase').placeholder = c.identityType && c.identityType !== 'none'
     ? 'leave blank to keep the identity you already loaded'
     : 'recovery phrase: word1 word2 …';
+  renderElectrumPresets(c.electrumPresets || []);
   updateFeeExample();
+}
+
+/// One click for each Umbrel Electrum app, because the addresses are fixed and nobody should
+/// have to look them up. They differ in port as well as host, which is the part people get
+/// wrong: Electrs and ElectrumX are on 50001, Fulcrum on 50002.
+function renderElectrumPresets(presets) {
+  const box = $('electrumPresets');
+  box.innerHTML = '';
+  for (const p of presets) {
+    const b = document.createElement('button');
+    b.className = 'ghost';
+    b.textContent = p.label;
+    b.title = `${p.host}:${p.port}`;
+    b.addEventListener('click', () => {
+      $('electrumHost').value = p.host;
+      $('electrumPort').value = p.port;
+    });
+    box.appendChild(b);
+  }
 }
 function updateFeeExample() {
   const base = Number($('baseFee').value || 0), ppm = Number($('feePpm').value || 0);
@@ -202,7 +232,8 @@ async function save() {
   };
   const f = $('pkarrFile').files[0];
   if (f) body.pkarrBase64 = await readFileBase64(f);
-  for (const fld of fields.filter(x => x !== 'directions')) body[fld] = Number($(fld).value);
+  for (const fld of fields.filter(x => x !== 'directions' && x !== 'electrumHost')) body[fld] = Number($(fld).value);
+  body.electrumHost = $('electrumHost').value.trim();
   const res = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   const j = await res.json();
   if (!res.ok) { $('saveNote').textContent = '⚠ ' + (j.error || 'error'); return; }
@@ -280,7 +311,9 @@ async function refresh() {
   $('copyPubky').style.display = pubky ? 'inline' : 'none';
   $('sNetwork').textContent = s.network;
   $('sLnd').textContent = `${s.lnd.ip || '—'}:${s.lnd.port}`;
-  $('sElectrs').textContent = `${s.electrs.ip || '—'}:${s.electrs.port}`;
+  $('sElectrs').textContent = s.electrum.host
+    ? `${s.electrum.host}:${s.electrum.port}` + (s.electrum.preset ? ` (${s.electrum.preset})` : '')
+    : '—';
 
   // The live offer, not the saved settings: an edit that has been saved but not yet picked
   // up would otherwise read as though it were already being advertised.
