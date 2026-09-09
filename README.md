@@ -1,95 +1,89 @@
-# Pubky Swap — Umbrel app
+# Pubky Swap: an Umbrel community app store
 
-Run a self-hosted **Lightning↔on-chain swap provider** on your own node. Pubky Swap advertises
-**submarine** (on-chain → Lightning) and **reverse** (Lightning → on-chain) swaps at the rates you
-set, and facilitates them using **your Umbrel's own LND node and Electrs** — no central server.
-Discovery/negotiation ride on the [Pubky](https://pubky.org) network.
+Run a self-hosted **Lightning to on-chain swap provider** on your own node.
 
-> ⚠️ **Early, unaudited software.** The swap engine ([`pubky-swap`](https://github.com/coreyphillips/pubky-swap))
-> is implemented and tested (including end-to-end on regtest against real LND), but it has **not** had
-> a third-party security review and mainnet hardening is ongoing. Atomic-swap bugs can lose funds.
+[Pubky Swap](https://github.com/coreyphillips/pubky-swap) advertises **submarine** (on-chain to
+Lightning) and **reverse** (Lightning to on-chain) swaps at the rates you set, and facilitates them
+using **your Umbrel's own LND node and Electrs**. There is no central swap server: discovery and
+negotiation ride on the [Pubky](https://pubky.org) network.
+
+> ⚠️ **Early software, not yet audited.** The swap engine is implemented and tested end-to-end on
+> regtest against real LND, and every fund-touching path has regression tests that fail without
+> their fix. It has **not** had a third-party security review. Atomic-swap bugs can lose funds.
 > Start with small limits and only risk what you can afford to lose.
 
-## How it works
+## Install
 
-This app is a small web control panel that **supervises the `swap-provider` daemon**:
+In umbrelOS, go to the App Store, open the menu (top right), choose **Community App Stores**, and
+add:
 
-1. Open the app, paste your **Pubky recovery phrase**, set your **rates/limits**, and hit
-   **Save & start**.
-2. The provider connects to your Umbrel's LND + Electrs and begins advertising. Reverse swaps are
-   funded directly from **LND's own on-chain balance** (`--wallet lnd`) — no separate seed to set up
-   or back up; just keep some on-chain liquidity in LND.
-3. The status panel shows your **Pubky** — share it with anyone who wants to swap with you.
-
-Your fee is `base_fee + amount × fee_ppm / 1_000_000` (e.g. `1000 sat + 2000 ppm` = `1200 sat` on a
-100k-sat swap).
-
-## Swap as a taker
-
-The **Swap with a provider** panel turns it around: paste someone else's Pubky to **check** whether
-they're a live provider and see their rates (a quote request — no funds move), then **swap your own
-funds in or out**. Both legs are funded/claimed via your LND wallet (`--wallet lnd`), so there's
-nothing extra to configure. Identity (recovery phrase or `.pkarr`) is the one you already loaded.
-
-## Dependencies (Umbrel apps)
-
-Declared in `umbrel-app.yml`:
-
-- **`lightning`** — your LND node. The app reads `tls.cert` + `admin.macaroon` from the mounted LND
-  data dir and connects to gRPC at `${APP_LIGHTNING_NODE_IP}:${APP_LIGHTNING_NODE_GRPC_PORT}`.
-- **`electrs`** — chain access, at `${APP_ELECTRS_NODE_IP}:50001`.
-
-## Build & run locally
-
-The image builds the `swap-provider` binary from the public pubky-swap repo, then runs it under the
-Node control server. To test outside Umbrel, supply the connection variables the Umbrel app proxy
-would normally inject:
-
-```bash
-docker compose build
-APP_LIGHTNING_NODE_IP=10.21.0.x APP_LIGHTNING_NODE_GRPC_PORT=10009 \
-APP_LIGHTNING_NODE_DATA_DIR=/path/to/lnd \
-APP_ELECTRS_NODE_IP=10.21.0.y \
-APP_DATA_DIR=$PWD/.appdata \
-  docker compose up
-# then open http://localhost:3000
+```
+https://github.com/coreyphillips/pubky-swap-umbrel
 ```
 
-Build args (Dockerfile): `PUBKY_SWAP_REPO` / `PUBKY_SWAP_REF` pin which pubky-swap to build.
+Then install **Pubky Swap** from the Pubky store that appears.
 
-### Publishing for the Umbrel store
+## What the app does
 
-Umbrel runs on arm64 (Raspberry Pi) and amd64, so publish a **multi-arch** image and replace
-`build: .` in `docker-compose.yml` with the published `image:`:
+It is a small web control panel that supervises the `swap-provider` daemon.
 
-```bash
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/coreyphillips/pubky-swap-umbrel:0.1.0 --push .
+1. Open the app and load your **Pubky identity**: paste a recovery phrase, or upload a `.pkarr`
+   recovery file.
+2. Set your **fees, amount limits and exposure limits**.
+3. Save. The provider starts, advertises your offer, and serves swaps against your LND and Electrs.
+4. Share the **Pubky it prints** with anyone who wants to swap with you.
+
+The dashboard shows what the daemon reports about itself: which startup checks pass, what is in
+flight, how much is committed against your limits, and what you have earned.
+
+## Two things worth knowing
+
+**Your seed never reaches a command line.** The recovery phrase is written to a file inside the
+app's own data volume, readable only by the app, and the daemon is told the path rather than the
+value. Anything that can read the process table on a node can read a process's arguments, so a
+seed passed as one is a seed shared with every other app on the box.
+
+**The dashboard asks the daemon, it does not read its logs.** The provider serves a read-only
+status API on loopback, and the panel calls it. Deciding whether a daemon is healthy by matching
+patterns against its log output works until a message is reworded, and then fails quietly in
+whichever direction happens to be wrong.
+
+## Repository layout
+
+```
+umbrel-app-store.yml     the community store itself (id: pubky)
+pubky-swap/              the app: manifest, compose file, icon
+docker/                  Dockerfile and entrypoint for the published image
+web/                     the control panel this image runs
+.github/workflows/       multi-arch image build, and the release guard
 ```
 
-## Configuration & data
+## Releasing
 
-- Your settings + Pubky identity are stored in the app's persistent volume
-  (`${APP_DATA_DIR}/data/config.json`, mode `0600`); in-flight swaps live in `…/data/swap/`. The
-  on-chain funding wallet is LND's, so there's no extra seed stored here.
-- Network defaults to `bitcoin` (Umbrel mainnet). On mainnet the provider refuses unsafe parameters
-  (low confirmations / fee floor) unless you tick **Allow unsafe** (testing only).
+The app is installed straight from `main`, so `main` must never name an image that does not exist:
+an Umbrel that syncs the store would try to pull it, fail, and hang on "Starting" with nothing to
+explain why. `check-release.yml` enforces that by requiring the compose file to name the image by
+digest, which cannot be known before the build publishes it.
 
-## ⚠️ Verify on your Umbrel
+So a release is three steps:
 
-This app was built against the documented Umbrel conventions but has **not yet been run on a live
-umbrelOS install**. The most likely things to confirm/adjust:
+1. Merge the code, leaving `version` in `umbrel-app.yml` and the image line alone.
+2. Push a tag (`v0.2.0`). `build-image.yml` resolves `main` to a commit, publishes the multi-arch
+   image from it, and prints the exact `image:` line to use, digest included, alongside the
+   pubky-swap commit it was built from.
+3. Open a second PR bumping `version` and the image tag and digest together. That is the only
+   commit that changes what Umbrel installs, and it cannot merge until the thing it names is real.
 
-- The exact dependency variables (`APP_LIGHTNING_NODE_IP`, `APP_LIGHTNING_NODE_GRPC_PORT`,
-  `APP_LIGHTNING_NODE_DATA_DIR`, `APP_ELECTRS_NODE_IP`) and the LND data-dir layout.
-- LND TLS: the cert must be valid for the IP the app dials (Umbrel's `tlsextraip` usually covers the
-  app network; if you see a cert error, that's the cause).
-- This compose publishes the control-panel port directly (mirroring the bitcoin-regtest-dashboard
-  reference app). If your umbrelOS expects an `app_proxy` service instead, add one pointing at
-  `APP_HOST: pubky-swap_server_1`, `APP_PORT: 3000`.
+## Building locally
 
-If something's off on a real install, capture the app logs and the issue is almost certainly one of
-the above.
+```bash
+docker build -f docker/Dockerfile -t pubky-swap-app:dev .
+```
+
+The image compiles `swap-provider` and `swap-client` from
+[pubky-swap](https://github.com/coreyphillips/pubky-swap) with `--features full,beignet`, so an
+operator can point the provider at a [beignet](https://github.com/coreyphillips/beignet) daemon
+instead of LND without a different image. `PUBKY_SWAP_REF` selects the upstream commit.
 
 ## License
 
