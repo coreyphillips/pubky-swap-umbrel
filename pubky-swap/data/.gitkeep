@@ -1,0 +1,4 @@
+The app's data volume, mounted at /data.
+
+Committed so the bind mount has a source that already exists: Docker creates a missing one as
+root, and the entrypoint then has to chown its way out of that before it can drop to UID 1000.
