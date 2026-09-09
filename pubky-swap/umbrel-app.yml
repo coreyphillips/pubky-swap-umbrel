@@ -1,0 +1,56 @@
+manifestVersion: 1
+id: pubky-swap
+category: lightning
+name: Pubky Swap
+version: "0.1.1"
+tagline: Run a self-hosted Lightning to on-chain swap provider on your own node
+icon: https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/icon.svg
+port: 3737
+description: >-
+  Turn your node into a **decentralized swap provider.** Pubky Swap advertises submarine
+  (on-chain to Lightning) and reverse (Lightning to on-chain) swaps at the rates you set, and
+  facilitates them using **your Umbrel's own LND node and Electrs**. There is no central swap
+  server: discovery and negotiation ride on the Pubky network.
+
+
+  Load your Pubky identity, set your fees and limits, and save. The provider starts advertising
+  and serving swaps, and you share the Pubky it prints with anyone who wants to swap with you.
+
+
+  The dashboard shows what the daemon is actually doing: which checks pass, what is in flight,
+  how much is committed against your limits, and what you have earned.
+
+
+  ⚠️ EARLY SOFTWARE, NOT YET AUDITED. The swap engine is implemented and tested end-to-end on
+  regtest against real LND, and every fund-touching path has regression tests. It has **not** had
+  a third-party security review. Atomic-swap bugs can lose funds. Start with small limits and only
+  risk what you can afford to lose.
+developer: Corey Phillips
+website: https://github.com/coreyphillips/pubky-swap
+submitter: Corey Phillips
+submission: https://github.com/coreyphillips/pubky-swap-umbrel
+repo: https://github.com/coreyphillips/pubky-swap-umbrel
+support: https://github.com/coreyphillips/pubky-swap/issues
+dependencies:
+  - lightning
+  - electrs
+releaseNotes: >-
+  First release. The app installs from a published multi-arch image rather than compiling on your
+  node.
+
+
+  Your Pubky recovery phrase never reaches the swap daemon's command line: it is written to a file
+  only the app can read, and passed by name. Anything that can read the process table on a node can
+  read another process's arguments.
+
+
+  The dashboard reads the daemon's own status API instead of matching patterns against its log
+  output, so health, in-flight swaps, exposure against your limits and earnings are what the daemon
+  reports rather than what a regex inferred.
+
+
+  This version ships fixes for ten defects an adversarial audit found in the swap engine, four of
+  which could lose funds, each with a regression test. See the pubky-swap changelog for detail.
+path: ""
+defaultUsername: ""
+defaultPassword: ""

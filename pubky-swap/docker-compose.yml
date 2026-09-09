@@ -1,0 +1,62 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # Matches the container_name pinned on the server below. Never a derived name: legacy
+      # Umbrel does not set container_name, so the name it would get depends on the compose
+      # binary the node happens to have (v1 yields pubky-swap_server_1, v2 yields
+      # pubky-swap-server-1). app_proxy blocks forever in its wait-for-port loop if this does
+      # not resolve, and the app hangs at "Starting" with the rest of the stack looking healthy.
+      APP_HOST: pubky-swap_server_1
+      APP_PORT: 3000
+
+  server:
+    # Pinned rather than derived, so the name is identical on compose v1, compose v2 and
+    # umbrelOS 1.x (whose patchComposeFile only fills container_name in when the app has not set
+    # one, so it defers to this).
+    container_name: pubky-swap_server_1
+    # The tag matches `version` in umbrel-app.yml: the release build publishes the image under
+    # the app version, so the two move together. The digest pins the exact multi-arch index that
+    # version's build published, and proves it exists: main must never name an image that has not
+    # been built yet, or every Umbrel that syncs the store tries to pull something that is not
+    # there and hangs on "Starting". See .github/workflows/check-release.yml.
+    image: ghcr.io/coreyphillips/pubky-swap-app:0.1.1@sha256:85f4259c10cd01f60c8cc71148b1d3e6134470b575634ea7c3af14f4f74327d1
+    restart: on-failure
+    init: true
+    stop_grace_period: 1m
+    volumes:
+      # LND credentials (tls.cert + macaroons), read-only. The provider reads them; it never
+      # needs to write here.
+      - ${APP_LIGHTNING_NODE_DATA_DIR}:/lnd:ro
+      # Persistent state: the saved settings, the Pubky identity, the funding wallet's database,
+      # and the in-flight swap records. A swap record is the only thing standing between a funded
+      # HTLC and coins nobody is watching, so this volume is not optional.
+      - ${APP_DATA_DIR}/data:/data
+    environment:
+      PORT: "3000"
+      DATA_DIR: /data
+
+      # --- Your Umbrel's LND node (dependency: lightning) ---
+      LND_IP: ${APP_LIGHTNING_NODE_IP}
+      LND_GRPC_PORT: ${APP_LIGHTNING_NODE_GRPC_PORT:-10009}
+      # The LND data directory is mounted read-only above; tls.cert and admin.macaroon are read
+      # from there rather than copied, so a credential rotation is picked up on restart.
+      LND_DIR: /lnd
+
+      # --- Your Umbrel's Electrs (dependency: electrs) ---
+      ELECTRS_IP: ${APP_ELECTRS_NODE_IP}
+      ELECTRS_PORT: "50001"
+
+      # The chain your node runs on. Umbrel exports this; mainnet is its default.
+      NETWORK: ${APP_BITCOIN_NETWORK:-mainnet}
+
+      # Which addresses may CHANGE anything here: save settings, start or stop the provider, run
+      # a swap. Reading is never restricted, so the dashboard always renders.
+      #
+      # By default that is loopback and the bridge gateway umbrelOS proxies through, which is not
+      # an address another app container can present as its own. If your umbrelOS proxies from
+      # somewhere else, the app refuses the change, says so on the dashboard and in `docker logs`,
+      # and names the address to add here. Comma separated.
+      # CONTROL_PLANE_ALLOW: ""
+
