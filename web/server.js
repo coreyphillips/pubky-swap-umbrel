@@ -159,6 +159,13 @@ function writeSwapConfig(cfg) {
     wallet_backend: 'lnd',
     // The dashboard reads this. Loopback inside the container.
     status_addr: `${STATUS_HOST}:${STATUS_PORT}`,
+    // Answer the doorbell, so someone who has only been handed your pubky can reach you.
+    //
+    // Pubky's private messages live at a path derived from an ECDH shared secret. That is what
+    // makes them unlinkable, and it also means there is no "who has written to me": the provider
+    // can only fetch messages from pubkys it already knows, which is its follow graph. Without
+    // the rendezvous, "share your pubky with anyone who wants to swap" is not a thing that works.
+    rendezvous_iroh: true,
   };
   const body =
     '# Written by the Pubky Swap Umbrel app. Edit the settings in the app, not here.\n' +
@@ -325,6 +332,9 @@ function clientArgs({ provider, direction, amount, quoteOnly }) {
     '--electrum-url', `tcp://${ELECTRS_IP}:${ELECTRS_PORT}`,
     // Fund and sweep via LND's own wallet, so a swap as a taker needs no second seed either.
     '--wallet', 'lnd',
+    // Ring the provider's doorbell first: a provider that has never heard of us cannot find our
+    // message otherwise, because it has no way to know it should look.
+    '--rendezvous-iroh',
     '--data-dir', path.join(DATA_DIR, 'client'),
   );
   if (quoteOnly) args.push('--quote-only');
@@ -413,6 +423,23 @@ function clearIdentity() {
   pushLog('Disconnected: identity and settings cleared.');
 }
 
+/// Why this is not a usable BIP39 recovery phrase, or `null` if it is.
+///
+/// Only the shape and the checksum: the wordlist is 2048 entries and shipping it to validate a
+/// field the daemon will parse properly anyway is not worth the weight. The checksum is what
+/// catches the mistakes people actually make, a mistyped or transposed word, because it fails for
+/// all but one word in 16.
+function bip39Problem(phrase) {
+  const words = phrase.split(' ').filter(Boolean);
+  if (![12, 15, 18, 21, 24].includes(words.length)) {
+    return `a recovery phrase is 12 or 24 words; this one has ${words.length}`;
+  }
+  if (words.some((w) => !/^[a-z]+$/.test(w))) {
+    return 'a recovery phrase is lowercase words separated by spaces';
+  }
+  return null;
+}
+
 function applySettings(body) {
   const cfg = loadSettings();
 
@@ -424,7 +451,14 @@ function applySettings(body) {
     writeSecret(IDENTITY_PATH, buf);
     removeSecret(PHRASE_PATH);
   } else if (typeof body.pubkyRecoveryPhrase === 'string' && body.pubkyRecoveryPhrase.trim()) {
-    writeSecret(PHRASE_PATH, body.pubkyRecoveryPhrase.trim() + '\n');
+    const phrase = body.pubkyRecoveryPhrase.trim().replace(/\s+/g, ' ').toLowerCase();
+    // Checked here rather than left to the daemon. A phrase with a typo fails deep inside the
+    // transport as "the mnemonic has an invalid checksum", by which point the provider has
+    // started, exited 1, and gone into a restart loop; the operator sees a log line and a
+    // stopped app rather than the field they mistyped.
+    const bad = bip39Problem(phrase);
+    if (bad) throw new Error(bad);
+    writeSecret(PHRASE_PATH, phrase + '\n');
     removeSecret(IDENTITY_PATH);
   }
   // A blank passphrase field means "leave it alone", so re-saving settings does not wipe one.
