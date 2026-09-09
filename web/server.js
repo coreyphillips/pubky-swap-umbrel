@@ -182,6 +182,8 @@ function swapEnv() {
   const env = {
     ...process.env,
     RUST_LOG: process.env.RUST_LOG || 'info',
+    // The log goes to a browser, not a terminal.
+    NO_COLOR: '1',
     PUBKY_SWAP_DATA_DIR: SWAP_DATA_DIR,
     PUBKY_SWAP_CONFIG: SWAP_CONFIG_PATH,
   };
@@ -195,8 +197,17 @@ let child = null;
 const LOG_MAX = 300;
 const logBuf = [];
 
+/// Colour codes are for a terminal, and this log is read in a browser.
+///
+/// `tracing-subscriber` colourises by default whenever it is not writing to a tty, or rather it
+/// does not check, so every daemon line arrived wrapped in escape sequences and the dashboard
+/// printed them literally: `[2m2026-09-09T16:38:41Z [0m [32m INFO [0m`. `NO_COLOR` in the
+/// daemon's environment stops most of it; this catches whatever still gets through, including
+/// from anything else this supervises.
+const ANSI = /\u001b\[[0-9;]*m/g;
+
 function pushLog(line) {
-  for (const l of String(line).split('\n')) {
+  for (const l of String(line).replace(ANSI, '').split('\n')) {
     if (!l.trim()) continue;
     logBuf.push(l);
     if (logBuf.length > LOG_MAX) logBuf.shift();
