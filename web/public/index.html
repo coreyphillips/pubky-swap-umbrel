@@ -34,6 +34,12 @@
   details summary { cursor:pointer; color:var(--mut); margin:14px 0 4px; }
   pre { background:#0a0e13; border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; max-height:240px; font-size:12.5px; color:#b9c4d0; white-space:pre-wrap; }
   .muted { color:var(--mut); font-size:13px; }
+  table.swaps { width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.swaps th { text-align:left; color:var(--mut); font-weight:500; padding:4px 8px 6px 0; border-bottom:1px solid var(--line); }
+  table.swaps td { padding:6px 8px 6px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.swaps tr:last-child td { border-bottom:0; }
+  table.swaps td.mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--mut); }
+  .scroll { overflow-x:auto; }
   .copy { cursor:pointer; color:var(--acc); font-size:12px; }
   @media (max-width:560px){ .grid{ grid-template-columns:1fr; } }
 </style>
@@ -55,6 +61,16 @@
     <div class="row"><span class="k">LND</span><span class="v" id="sLnd">—</span></div>
     <div class="row"><span class="k">Electrs</span><span class="v" id="sElectrs">—</span></div>
     <div class="row"><span class="k">Advertised fee</span><span class="v" id="sFee">—</span></div>
+    <div class="row"><span class="k">In flight</span><span class="v" id="sInFlight">—</span></div>
+    <div class="row"><span class="k">Committed</span><span class="v" id="sCommitted">—</span></div>
+    <div class="row"><span class="k">Earned</span><span class="v" id="sEarned">—</span></div>
+    <div class="row"><span class="k">Checks</span><span class="v" id="sChecks">—</span></div>
+    <div id="healthList" class="muted" style="margin-top:6px"></div>
+  </div>
+
+  <div id="swapsSection" style="display:none">
+    <h2>Swaps <span class="muted" id="swapsCount"></span></h2>
+    <div class="card" id="swapsCard"></div>
   </div>
 
   <h2>Settings</h2>
@@ -236,21 +252,114 @@ pollSwap();
 function badge(el, kind, text) { el.className = 'badge ' + kind; el.textContent = text; }
 async function refresh() {
   let s; try { s = await (await fetch('/api/status')).json(); } catch { return; }
+  const d = s.daemon || {};
+  const ds = d.status, dh = d.health, dl = d.limits, de = d.earnings;
   const top = $('statusBadge');
   if (!s.configured) badge(top, 'b-off', 'needs setup');
-  else if (s.running && s.executionCapable) badge(top, 'b-ok', 'live');
-  else if (s.running) badge(top, 'b-bad', 'negotiation-only');
-  else badge(top, 'b-off', 'stopped');
+  else if (!d.running) badge(top, 'b-off', 'stopped');
+  else if (ds && ds.capable) badge(top, 'b-ok', 'live');
+  else if (dh && dh.checking) badge(top, 'b-off', 'starting');
+  else badge(top, 'b-bad', 'not serving swaps');
 
-  $('sProvider').textContent = s.running ? (s.executionCapable ? 'running — executing swaps' : 'running — negotiation only (check LND/Electrs)') : 'stopped';
-  $('sPubky').textContent = s.pubky || '—';
-  $('copyPubky').style.display = s.pubky ? 'inline' : 'none';
+  $('sProvider').textContent = !d.running ? 'stopped'
+    : (ds && ds.capable) ? 'running, executing swaps'
+    : (dh && dh.checking) ? 'starting, running its first checks'
+    : 'running, but not able to execute swaps yet';
+
+  const pubky = ds ? ds.pubky : '';
+  $('sPubky').textContent = pubky || '—';
+  $('copyPubky').style.display = pubky ? 'inline' : 'none';
   $('sNetwork').textContent = s.network;
-  $('sLnd').innerHTML = `${s.lnd.ip || '—'}:${s.lnd.port} ` + (s.lnd.connected ? '<span class="badge b-ok">connected</span>' : '<span class="badge b-bad">not connected</span>');
+  $('sLnd').textContent = `${s.lnd.ip || '—'}:${s.lnd.port}`;
   $('sElectrs').textContent = `${s.electrs.ip || '—'}:${s.electrs.port}`;
-  const fee = s.rates.baseFee + Math.floor(100000 * s.rates.feePpm / 1e6);
-  $('sFee').textContent = `${s.rates.baseFee} sat + ${s.rates.feePpm} ppm  ·  ${s.rates.minAmount}–${s.rates.maxAmount} sat  ·  ${s.rates.directions}`;
+
+  // The live offer, not the saved settings: an edit that has been saved but not yet picked
+  // up would otherwise read as though it were already being advertised.
+  const o = d.offer;
+  $('sFee').textContent = !o ? (d.running ? 'not advertising yet' : '—')
+    : `${o.base_fee_sat} sat + ${o.fee_ppm} ppm, plus ~${o.onchain_fee_sat} sat on chain `
+      + `· ${o.min_amount_sat.toLocaleString()}–${o.max_amount_sat.toLocaleString()} sat `
+      + `· ${(o.directions || []).join(', ').toLowerCase() || 'no direction'}`;
+
+  const swaps = d.swaps;
+  $('sInFlight').textContent = ds ? `${ds.in_flight} swap(s)` + (swaps ? `, ${swaps.finished_total} finished` : '') : '—';
+  $('sCommitted').textContent = dl ? `${dl.committed_sat.toLocaleString()} of ${dl.max_total_exposure_sat.toLocaleString()} sat` : '—';
+  $('sEarned').textContent = de ? `${de.service_fee_sat.toLocaleString()} sat over ${de.completed} swap(s)` : '—';
+
+  // The checks, from the daemon's own startup diagnostic. Each failure carries what to do.
+  const list = $('healthList');
+  if (dh && dh.checking) {
+    $('sChecks').textContent = 'running the first check…';
+    list.innerHTML = '';
+  } else if (dh && dh.checks) {
+    $('sChecks').textContent = dh.failures === 0
+      ? `all ${dh.checks.length} passing`
+      : `${dh.failures} of ${dh.checks.length} failing`;
+    list.innerHTML = dh.checks.map((k) => {
+      const cls = k.status === 'pass' ? 'b-ok' : k.status === 'warn' ? 'b-off' : 'b-bad';
+      const remedy = k.remedy ? `<div class="muted" style="margin:2px 0 6px 12px">${esc(k.remedy)}</div>` : '';
+      return `<div><span class="badge ${cls}">${k.status}</span> <b>${esc(k.name)}</b> ${esc(k.detail)}</div>${remedy}`;
+    }).join('');
+  } else {
+    $('sChecks').textContent = d.healthError ? 'not answering' : '—';
+    list.innerHTML = '';
+  }
+
+  renderSwaps(swaps);
   $('log').textContent = (s.log || []).join('\n') || '…';
+}
+
+/// Active swaps first, then the most recent finished ones. Hidden entirely when there are none,
+/// so a fresh install is not a page of empty tables.
+function renderSwaps(swaps) {
+  const section = $('swapsSection');
+  const rows = swaps ? [...swaps.active, ...swaps.recent] : [];
+  if (!rows.length) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  $('swapsCount').textContent = `${swaps.active.length} active, ${swaps.finished_total} finished`
+    + (swaps.finished_total > swaps.recent.length ? ` (showing the last ${swaps.recent.length})` : '');
+  const active = new Set(swaps.active.map((r) => r.swap_id));
+  $('swapsCard').innerHTML = '<div class="scroll"><table class="swaps">'
+    + '<tr><th>State</th><th>Direction</th><th>Amount</th><th>Fee</th><th>Peer</th><th>Timeout</th><th>Updated</th></tr>'
+    + rows.map((r) => {
+      const cls = active.has(r.swap_id) ? 'b-off'
+        : r.state === 'claimed' ? 'b-ok'
+        : (r.state === 'refunded' || r.state === 'expired') ? 'b-off' : 'b-bad';
+      const reorg = (r.reorg_seen_at_height !== null && r.reorg_seen_at_height !== undefined)
+        ? ` <span class="badge b-bad">reorg at ${r.reorg_seen_at_height}</span>` : '';
+      // `state_detail` is the failure reason; `last_error` is the last thing that went wrong,
+      // which on a swap that recovered is not the same thing and is worth seeing either way.
+      const why = [r.state_detail, r.last_error].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+      const err = why.length ? `<div class="muted">${esc(why.join('; '))}</div>` : '';
+      return `<tr><td><span class="badge ${cls}">${esc(r.state.replace(/_/g, ' '))}</span>${reorg}${err}</td>`
+        + `<td>${esc(r.direction)}</td>`
+        + `<td>${r.onchain_amount_sat.toLocaleString()} sat</td>`
+        + `<td>${r.service_fee_sat.toLocaleString()} sat</td>`
+        + `<td class="mono" title="${esc(r.peer)}">${esc(short(r.peer))}</td>`
+        + `<td>${r.timeout_height}</td>`
+        + `<td class="muted">${ago(r.updated_at_unix)}</td></tr>`;
+    }).join('')
+    + '</table></div>';
+}
+
+/// Pubkys are 52 characters and the column is one of seven, so it is shown truncated with the
+/// whole thing on the element's title.
+function short(pubky) {
+  const t = String(pubky);
+  return t.length > 13 ? t.slice(0, 12) + '…' : t;
+}
+
+/// The daemon stamps records in unix seconds; the browser's clock is the only one the reader has.
+function ago(unix) {
+  const secs = Math.max(0, Math.floor(Date.now() / 1000) - Number(unix));
+  if (secs < 90) return `${secs}s ago`;
+  if (secs < 5400) return `${Math.round(secs / 60)}m ago`;
+  if (secs < 172800) return `${Math.round(secs / 3600)}h ago`;
+  return `${Math.round(secs / 86400)}d ago`;
+}
+
+function esc(t) {
+  return String(t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 }
 loadConfig(); refresh(); setInterval(refresh, 3000);
 </script>
