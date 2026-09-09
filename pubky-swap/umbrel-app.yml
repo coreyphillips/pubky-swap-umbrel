@@ -1,10 +1,14 @@
 manifestVersion: 1
 id: pubky-swap
-category: lightning
+category: bitcoin
 name: Pubky Swap
 version: "0.1.1"
 tagline: Run a self-hosted Lightning to on-chain swap provider on your own node
 icon: https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/icon.svg
+gallery:
+  - https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/gallery/1.png
+  - https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/gallery/2.png
+  - https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/gallery/3.png
 port: 3737
 description: >-
   Turn your node into a **decentralized swap provider.** Pubky Swap advertises submarine

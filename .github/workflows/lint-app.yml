@@ -1,0 +1,55 @@
+name: lint-app
+
+# umbrelOS drops an app whose manifest it cannot accept, and it does so quietly: the store lists
+# nothing and there is no error anywhere to read. That is exactly what happened with `category:
+# lightning`, which is not one of the ten categories umbrelOS knows, and with a missing `gallery`.
+#
+# So the manifest is checked against Umbrel's own linter, taken from getumbrel/umbrel-apps, rather
+# than against anybody's memory of the rules.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: store
+
+      - name: Fetch Umbrel's linter
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/getumbrel/umbrel-apps umbrel-apps
+          cd umbrel-apps
+          git sparse-checkout set --no-cone '.tools/*' '/package.json' '/package-lock.json'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+        working-directory: umbrel-apps
+
+      - name: Lint the app
+        run: |
+          set -euo pipefail
+          # The linter resolves `dependencies` against directories in the root it scans, and ours
+          # live in Umbrel's own store rather than here. Stub them so a real dependency is not
+          # reported as unknown, which would hide a real error among noise.
+          for dep in $(sed -n '/^dependencies:/,/^[a-z]/p' store/pubky-swap/umbrel-app.yml \
+                        | sed -n 's/^  - //p'); do
+            mkdir -p "store/$dep"
+            printf 'manifestVersion: 1\nid: %s\n' "$dep" > "store/$dep/umbrel-app.yml"
+          done
+
+          node umbrel-apps/.tools/lint-apps.mjs --root store pubky-swap --format text | tee out.txt
+
+          # Warnings are allowed: the ones we get are official-store submission rules that do not
+          # apply to a community store. `container_name` is pinned deliberately, and gallery and
+          # icon assets have to be committed because there is no submission PR to attach them to.
+          grep -qE '^0 error\(s\)' out.txt || { echo "::error::the manifest has errors"; exit 1; }
