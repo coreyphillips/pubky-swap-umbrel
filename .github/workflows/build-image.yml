@@ -45,9 +45,22 @@ jobs:
           fi
           REF="${{ github.event.inputs.pubky_swap_ref }}"
           [ -n "$REF" ] || REF=main
+
+          # Resolved to a commit here rather than left as a branch name, so the build is pinned to
+          # one commit and the release PR can say which. "main" moves; an image whose provenance is
+          # "main, at some point on Tuesday" cannot be rebuilt or audited. A SHA passed in is used
+          # as given.
+          case "$REF" in
+            [0-9a-f]*) [ ${#REF} -eq 40 ] && SHA="$REF" ;;
+          esac
+          if [ -z "${SHA:-}" ]; then
+            SHA=$(git ls-remote https://github.com/coreyphillips/pubky-swap.git "$REF" | cut -f1)
+            [ -n "$SHA" ] || { echo "::error::could not resolve pubky-swap ref '$REF'"; exit 1; }
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "ref=$REF" >> "$GITHUB_OUTPUT"
-          echo "Building $VERSION from pubky-swap@$REF"
+          echo "ref=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Building $VERSION from pubky-swap@$SHA (from '$REF')"
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -76,3 +89,5 @@ jobs:
       - name: The line to put in pubky-swap/docker-compose.yml
         run: |
           echo "image: ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}@${{ steps.push.outputs.digest }}"
+          echo ""
+          echo "built from pubky-swap@${{ steps.meta.outputs.ref }}"
