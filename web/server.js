@@ -473,7 +473,19 @@ function applySettings(body) {
     writeSecret(PHRASE_PATH, phrase + '\n');
     removeSecret(IDENTITY_PATH);
   }
-  // A blank passphrase field means "leave it alone", so re-saving settings does not wipe one.
+  // The passphrase belongs to the identity it was supplied with, and to no other.
+  //
+  // A blank field means "leave it alone" while the identity is unchanged, which is what makes
+  // re-saving rates safe. It must not mean that when the identity itself is being replaced: an
+  // operator who once uploaded a passphrase-protected .pkarr and later pastes a recovery phrase
+  // from Pubky Ring, leaving the passphrase blank because Ring does not use one, would otherwise
+  // get `to_seed(<the old passphrase>)`. That is a different seed, so a different identity, so a
+  // valid-looking pubky with no account behind it, and a provider that will not start with
+  // nothing on screen connecting the two.
+  const identityChanged =
+    (typeof body.pkarrBase64 === 'string' && body.pkarrBase64.trim()) ||
+    (typeof body.pubkyRecoveryPhrase === 'string' && body.pubkyRecoveryPhrase.trim());
+  if (identityChanged) removeSecret(PASSPHRASE_PATH);
   if (typeof body.pubkyPassphrase === 'string' && body.pubkyPassphrase.length) {
     writeSecret(PASSPHRASE_PATH, body.pubkyPassphrase + '\n');
   }
@@ -639,6 +651,26 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== 'GET' && !allowedRemote(req)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'this control plane only accepts changes from the Umbrel app gateway' }));
+    }
+    // The address check cannot see a request a browser makes on someone else's behalf: it arrives
+    // from the gateway like any other, because it is coming through the gateway. A page on another
+    // site can post a form to this app without a CORS preflight, provided it uses a content type
+    // forms are allowed to send, and `readBody` would happily `JSON.parse` what it sent.
+    //
+    // Requiring `application/json` puts every request through a preflight, which same-origin
+    // policy then refuses. Rejecting a cross-origin `Origin` closes the same door from the other
+    // side, for anything that does send one.
+    if (req.method !== 'GET') {
+      const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+      if (type !== 'application/json') {
+        res.writeHead(415, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'changes must be sent as application/json' }));
+      }
+      const origin = req.headers.origin;
+      if (origin && origin !== `http://${req.headers.host}` && origin !== `https://${req.headers.host}`) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'cross-origin changes are refused' }));
+      }
     }
     if (req.method === 'GET' && url.pathname === '/api/status') return sendJson(res, 200, await statusView());
     if (req.method === 'GET' && url.pathname === '/api/config') return sendJson(res, 200, settingsView());

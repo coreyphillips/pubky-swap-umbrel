@@ -77,15 +77,17 @@
   <div class="card">
     <label>Pubky identity <span class="muted" id="identityState"></span></label>
     <div class="muted" style="margin:2px 0 8px">This has to be an identity that already exists.
-      Create one in <a href="https://pubky.app" target="_blank" rel="noreferrer" style="color:var(--acc)">Pubky
-      Ring or pubky.app</a> and paste its recovery phrase (or upload its recovery file) here. A phrase
-      you invent has no account behind it, and the provider will not start.</div>
+      In <a href="https://pubky.app" target="_blank" rel="noreferrer" style="color:var(--acc)">Pubky
+      Ring</a>, open your identity and choose <b>Backup</b>: either type its <b>recovery phrase</b>
+      here and leave the passphrase blank, since Ring does not set one, or upload its
+      <b>encrypted file</b> with the passphrase you gave it. A phrase you invent has no account
+      behind it and the provider will not start.</div>
     <textarea id="pubkyRecoveryPhrase" placeholder="recovery phrase: word1 word2 …"></textarea>
     <div class="inline" style="margin:6px 0 0">
       <span class="muted">or upload a recovery file:</span>
       <input type="file" id="pkarrFile" accept=".pkarr" style="color:var(--mut);font-size:13px" />
     </div>
-    <label>Pubky passphrase <span class="muted">(optional — for the phrase or the file)</span></label>
+    <label>Pubky passphrase <span class="muted">(only if your recovery file has one; leave blank for a Ring recovery phrase)</span></label>
     <input type="password" id="pubkyPassphrase" placeholder="(leave blank if none)" />
 
     <div class="muted" style="margin:8px 0 2px">💡 Reverse swaps are funded directly from your node's
@@ -167,7 +169,10 @@ async function loadConfig() {
   $('allowUnsafe').checked = !!c.allowUnsafe;
   const state = { file: 'recovery file loaded ✓', phrase: 'recovery phrase saved ✓', none: 'not set' }[c.identityType] || '';
   $('identityState').textContent = `— ${state}`;
-  $('pubkyRecoveryPhrase').placeholder = c.hasPubky ? 'leave blank to keep current identity' : 'recovery phrase: word1 word2 …';
+  // `hasPubky` was never a field the server sent, so this always took the second branch.
+  $('pubkyRecoveryPhrase').placeholder = c.identityType && c.identityType !== 'none'
+    ? 'leave blank to keep the identity you already loaded'
+    : 'recovery phrase: word1 word2 …';
   updateFeeExample();
 }
 function updateFeeExample() {
@@ -242,7 +247,7 @@ $('startSwap').addEventListener('click', async () => {
   $('swapNote').textContent = ''; $('swapLog').style.display = 'block';
   pollSwap();
 });
-$('cancelSwap').addEventListener('click', async () => { await fetch('/api/swap-cancel', { method:'POST' }); pollSwap(); });
+$('cancelSwap').addEventListener('click', async () => { await fetch('/api/swap-cancel', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' }); pollSwap(); });
 async function pollSwap() {
   let s; try { s = await (await fetch('/api/swap-status')).json(); } catch { return; }
   $('cancelSwap').style.display = s.running ? 'inline' : 'none';
