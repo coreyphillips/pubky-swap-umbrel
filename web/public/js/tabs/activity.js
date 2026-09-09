@@ -142,12 +142,14 @@ function tableCard(snap, root) {
       el('th', { text: 'Updated' }))),
     el('tbody', {}, ...shown.map((swap) => row(swap, snap))));
 
-  return c.card({
-    title: 'Activity',
-    meta: snap.swaps && snap.swaps.finished_total
-      ? `${shown.length} shown of ${snap.swaps.finished_total} finished`
-      : `${shown.length} shown`,
-  },
+  // Counting the same thing twice reads as a contradiction: the shown rows include swaps still in
+  // flight, while finished_total counts only the ones that ended. Say what each number is.
+  const finished = snap.swaps && snap.swaps.finished_total;
+  const meta = shown.length === all.length
+    ? (finished ? `${all.length} here, ${finished} finished in total` : `${all.length} swaps`)
+    : `${shown.length} of ${all.length} shown`;
+
+  return c.card({ title: 'Activity', meta },
     el('div.row', { style: { 'margin-bottom': 'var(--s-3)' } }, pills, el('span.spacer'), searchInput),
     shown.length
       ? el('div.table-wrap', {}, table)
