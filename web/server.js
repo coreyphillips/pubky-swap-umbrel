@@ -19,6 +19,7 @@
 
 const http = require('http');
 const fs = require('fs');
+const dns = require('dns');
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -503,13 +504,92 @@ function applySettings(body) {
 // what fronts the browser with Umbrel's own authentication; anything arriving from elsewhere has
 // bypassed it. Restricting to the proxy and to loopback is what keeps another app on the node
 // from driving a daemon that moves money.
+/// The addresses the control plane will answer: loopback, the bridge gateway umbrelOS proxies
+/// through, and whatever `app_proxy` resolves to on an Umbrel that still runs that sidecar.
+///
+/// This used to accept 10/8, 192.168/16 and 172.16/12 wholesale, on the reasoning that the proxy
+/// lives on a private bridge. Every other app on an Umbrel lives on that same bridge. I checked
+/// what that means by putting two of these containers on one network and having the second POST
+/// `{"action":"clear"}` at the first: HTTP 200, and the first app's Pubky identity was gone. Any
+/// app on the box could also stop the provider mid-swap, or point it at an identity whose seed it
+/// knows.
+///
+/// Two addresses are legitimate and neither is forgeable by a peer container, because packets
+/// from a peer carry the peer's own address:
+///
+///  - The bridge **gateway**. Current umbrelOS proxies from the host, so that is where the
+///    connection enters the container from. Read from the routing table, so there is no window
+///    before it is known.
+///  - **`app_proxy`**, on older umbrelOS where that sidecar still exists. Resolved by Docker DNS,
+///    and re-resolved because its address changes across restarts.
+///
+/// `CONTROL_PLANE_ALLOW` adds more, comma separated, for anything neither covers.
+const ALLOWED_REMOTES = new Set();
+let warnedRejections = new Set();
+
+function addGatewayAddresses() {
+  try {
+    // `Destination 00000000` is the default route; `Gateway` is little-endian hex.
+    for (const line of fs.readFileSync('/proc/net/route', 'utf8').trim().split('\n').slice(1)) {
+      const f = line.split(/\s+/);
+      if (f[1] !== '00000000' || !f[2] || f[2] === '00000000') continue;
+      const n = parseInt(f[2], 16);
+      ALLOWED_REMOTES.add([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >> 24) & 0xff].join('.'));
+    }
+  } catch {
+    // Not Linux, or no procfs: a developer running this outside a container, who reaches it on
+    // loopback anyway.
+  }
+}
+
+function refreshAppProxy() {
+  // `all: true` because the container can be on more than one network and the connection uses
+  // whichever one it uses.
+  dns.lookup('app_proxy', { all: true }, (err, addrs) => {
+    if (err) return; // Not that generation of umbrelOS, or not up yet. The gateway covers it.
+    for (const a of addrs || []) {
+      if (a.address && !ALLOWED_REMOTES.has(a.address)) {
+        ALLOWED_REMOTES.add(a.address);
+        pushLog(`Control plane also answers app_proxy at ${a.address}.`);
+      }
+    }
+  });
+}
+
+for (const extra of String(process.env.CONTROL_PLANE_ALLOW || '').split(',')) {
+  if (extra.trim()) ALLOWED_REMOTES.add(extra.trim());
+}
+addGatewayAddresses();
+refreshAppProxy();
+setInterval(refreshAppProxy, 60_000).unref?.();
+{
+  const where = ALLOWED_REMOTES.size
+    ? `Changes accepted from loopback and ${[...ALLOWED_REMOTES].join(', ')}.`
+    : 'Changes accepted from loopback only.';
+  pushLog(where);
+  console.log(where);
+}
+
 function allowedRemote(req) {
   const addr = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
   if (addr === '127.0.0.1' || addr === '::1') return true;
-  // Umbrel's app_proxy is the only other thing that should be talking to us. It sits on the
-  // shared bridge network; accept the private ranges that bridge uses, and nothing routable.
-  return /^10\./.test(addr) || /^192\.168\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr);
+  if (ALLOWED_REMOTES.has(addr)) return true;
+  // Said out loud, once per address. A guard that refuses the only way in and explains nothing is
+  // how an operator ends up locked out of their own swaps with no idea why.
+  if (!warnedRejections.has(addr)) {
+    warnedRejections.add(addr);
+    if (warnedRejections.size > 50) warnedRejections = new Set([addr]);
+    const msg =
+      `Refused a change from ${addr}. If that is how you reach this app, set ` +
+      `CONTROL_PLANE_ALLOW=${addr} on the container.`;
+    pushLog(msg);
+    // Also to the container log: an operator who cannot make changes may be looking at
+    // `docker logs` rather than at the dashboard.
+    console.error(msg);
+  }
+  return false;
 }
+
 
 // --- tiny HTTP layer ---
 function sendJson(res, code, obj) {
@@ -536,8 +616,19 @@ function serveStatic(res, urlPath) {
 
 const server = http.createServer(async (req, res) => {
   try {
-    if (!allowedRemote(req)) { res.writeHead(403); return res.end('forbidden'); }
     const url = new URL(req.url, 'http://localhost');
+    // Only what can do harm is gated, and everything that can do harm is a POST: writing the
+    // identity, stopping or clearing the provider, starting a swap, spawning the client.
+    //
+    // Reading is deliberately not gated. The status view carries no secret, and the alternative
+    // is worse than it sounds: the allow list is derived from the container's routing, and if it
+    // is ever wrong the operator meets a blank page with nothing to read, on the one screen that
+    // would have told them what to allow. This way a wrong list degrades to "you can see
+    // everything and change nothing", with the reason in the log on the page in front of them.
+    if (req.method !== 'GET' && !allowedRemote(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'this control plane only accepts changes from the Umbrel app gateway' }));
+    }
     if (req.method === 'GET' && url.pathname === '/api/status') return sendJson(res, 200, await statusView());
     if (req.method === 'GET' && url.pathname === '/api/config') return sendJson(res, 200, settingsView());
     if (req.method === 'POST' && url.pathname === '/api/config') {
