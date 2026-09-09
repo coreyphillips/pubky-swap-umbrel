@@ -23,6 +23,17 @@ https://github.com/coreyphillips/pubky-swap-umbrel
 
 Then install **Pubky Swap** from the Pubky store that appears.
 
+## Electrs, Fulcrum or ElectrumX
+
+Any of the three. The app asks Umbrel for `electrs`, and Fulcrum and ElectrumX both declare
+`implements: electrs`, so whichever you have installed is what it connects to. Nothing to
+configure.
+
+The swap engine speaks plain Electrum protocol and nothing beyond it: script history and
+unspents, transaction get and broadcast, block headers, and `estimatefee`. The full HTLC engine,
+reorg detection and funding-wallet test suites run green against a real Fulcrum as well as
+against Electrs.
+
 ## What the app does
 
 It is a small web control panel that supervises the `swap-provider` daemon.
