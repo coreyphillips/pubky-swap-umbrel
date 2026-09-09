@@ -25,9 +25,16 @@ Then install **Pubky Swap** from the Pubky store that appears.
 
 ## Electrs, Fulcrum or ElectrumX
 
-Any of the three. The app asks Umbrel for `electrs`, and Fulcrum and ElectrumX both declare
-`implements: electrs`, so whichever you have installed is what it connects to. Nothing to
-configure.
+Any of the three, and none of them is required to install. Pick yours in the app: there is a
+one-click button for each of Umbrel's Electrum apps, or type in a server of your own.
+
+The app deliberately declares no dependency on `electrs`. Fulcrum and ElectrumX both say
+`implements: electrs`, and recent umbrelOS will offer them as alternatives, but an older one
+refuses to install without Electrs itself. Umbrel's app network is shared, so the app reaches
+whichever server you run without needing to declare it.
+
+They do not agree on the port, which is the detail worth knowing if you set one by hand: Electrs
+and ElectrumX listen on 50001, Fulcrum on 50002.
 
 The swap engine speaks plain Electrum protocol and nothing beyond it: script history and
 unspents, transaction get and broadcast, block headers, and `estimatefee`. The full HTLC engine,

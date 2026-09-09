@@ -50,13 +50,29 @@ const LND_IP = process.env.LND_IP || '';
 const LND_GRPC_PORT = process.env.LND_GRPC_PORT || '10009';
 const LND_DIR = process.env.LND_DIR || '/lnd';
 const ELECTRS_IP = process.env.ELECTRS_IP || '';
-const ELECTRS_PORT = process.env.ELECTRS_PORT || '50001';
+const ELECTRS_PORT = process.env.ELECTRS_PORT || '';
 const NETWORK = process.env.NETWORK || 'mainnet';
 
 // Umbrel exports the chain as `mainnet`; the swap daemon calls it `bitcoin`.
 const SWAP_NETWORK = { mainnet: 'bitcoin', bitcoin: 'bitcoin', testnet: 'testnet', signet: 'signet', regtest: 'regtest' }[NETWORK] || 'bitcoin';
 // LND stores chain data under data/chain/bitcoin/<mainnet|testnet|signet|regtest>/.
 const LND_NETWORK_DIR = { bitcoin: 'mainnet', mainnet: 'mainnet', testnet: 'testnet', signet: 'signet', regtest: 'regtest' }[NETWORK] || 'mainnet';
+
+/// One-click Electrum servers.
+///
+/// Umbrel's Electrs, Fulcrum and ElectrumX apps sit at fixed addresses on the shared app network,
+/// published in each one's `exports.sh`, and are reachable from here whether or not this app
+/// declares a dependency on them. It deliberately declares none: doing so would make umbrelOS
+/// insist on that one specific app, and an operator running Fulcrum would be told to install
+/// Electrs to use a swap provider that does not need it.
+///
+/// The ports differ, which is the detail that makes a hardcoded default wrong for somebody:
+/// Electrs and ElectrumX listen on 50001, Fulcrum on 50002.
+const ELECTRUM_PRESETS = [
+  { id: 'electrs', label: 'Umbrel Electrs', host: '10.21.21.10', port: 50001 },
+  { id: 'fulcrum', label: 'Umbrel Fulcrum', host: '10.21.21.200', port: 50002 },
+  { id: 'electrumx', label: 'Umbrel ElectrumX', host: '10.21.21.199', port: 50001 },
+];
 
 const DEFAULT_SETTINGS = {
   directions: 'submarine,reverse',
@@ -75,6 +91,10 @@ const DEFAULT_SETTINGS = {
   minOnchainReserveSat: 100000,
   broadcastOffer: false,
   allowUnsafe: false,
+  // Where to reach an Electrum server. Seeded from the environment on first run when something
+  // injected it, else from the Electrs preset, and changeable in the app either way.
+  electrumHost: ELECTRS_IP || ELECTRUM_PRESETS[0].host,
+  electrumPort: Number(ELECTRS_PORT) || ELECTRUM_PRESETS[0].port,
 };
 
 // --- settings (everything that is not a secret) ---
@@ -154,7 +174,7 @@ function writeSwapConfig(cfg) {
     lnd_address: `https://${LND_IP}:${LND_GRPC_PORT}`,
     lnd_cert_path: path.join(LND_DIR, 'tls.cert'),
     lnd_macaroon_path: path.join(LND_DIR, 'data', 'chain', 'bitcoin', LND_NETWORK_DIR, 'admin.macaroon'),
-    electrum_url: `tcp://${ELECTRS_IP}:${ELECTRS_PORT}`,
+    electrum_url: electrumUrl(cfg),
     // Fund reverse-swap HTLCs from LND's own on-chain wallet, so there is no second seed to
     // back up and nothing to fund separately.
     wallet_backend: 'lnd',
@@ -175,6 +195,15 @@ function writeSwapConfig(cfg) {
   const tmp = SWAP_CONFIG_PATH + '.tmp';
   fs.writeFileSync(tmp, body, { mode: 0o600 });
   fs.renameSync(tmp, SWAP_CONFIG_PATH);
+}
+
+/// The Electrum URL both binaries are given.
+///
+/// One place, so the provider and a taker swap never disagree about which server they are asking.
+function electrumUrl(cfg) {
+  const host = String(cfg.electrumHost || '').trim();
+  const port = Number(cfg.electrumPort) || ELECTRUM_PRESETS[0].port;
+  return `tcp://${host}:${port}`;
 }
 
 /// The environment both binaries run with: where the config is, and where the secrets are.
@@ -341,7 +370,7 @@ function clientArgs({ provider, direction, amount, quoteOnly }) {
     '--lnd-address', `https://${LND_IP}:${LND_GRPC_PORT}`,
     '--lnd-cert', path.join(LND_DIR, 'tls.cert'),
     '--lnd-macaroon', path.join(LND_DIR, 'data', 'chain', 'bitcoin', LND_NETWORK_DIR, 'admin.macaroon'),
-    '--electrum-url', `tcp://${ELECTRS_IP}:${ELECTRS_PORT}`,
+    '--electrum-url', electrumUrl(loadSettings()),
     // Fund and sweep via LND's own wallet, so a swap as a taker needs no second seed either.
     '--wallet', 'lnd',
     // Ring the provider's doorbell first: a provider that has never heard of us cannot find our
@@ -408,7 +437,11 @@ async function statusView() {
     identityType: identityKind(),
     network: SWAP_NETWORK,
     lnd: { ip: LND_IP, port: LND_GRPC_PORT },
-    electrs: { ip: ELECTRS_IP, port: ELECTRS_PORT },
+    electrum: (() => {
+      const c = loadSettings();
+      const preset = ELECTRUM_PRESETS.find((p) => p.host === c.electrumHost && p.port === Number(c.electrumPort));
+      return { host: c.electrumHost, port: Number(c.electrumPort), preset: preset ? preset.label : null };
+    })(),
     daemon: await daemonState(),
     log: logBuf.slice(-120),
   };
@@ -418,6 +451,7 @@ function settingsView() {
   const cfg = loadSettings();
   return {
     ...cfg,
+    electrumPresets: ELECTRUM_PRESETS,
     network: SWAP_NETWORK,
     configured: isConfigured(),
     identityType: identityKind(),
@@ -509,6 +543,16 @@ function applySettings(body) {
   num('maxTotalExposureSat', 0, 1e12);
   num('maxExposurePerPeerSat', 0, 1e12);
   num('minOnchainReserveSat', 0, 1e12);
+  num('electrumPort', 1, 65535);
+  if (typeof body.electrumHost === 'string' && body.electrumHost.trim()) {
+    const host = body.electrumHost.trim();
+    // A hostname or an IP, nothing with a scheme or a port in it: the two fields are separate and
+    // a value like "tcp://10.21.21.10:50001" pasted in here would build a URL that cannot resolve.
+    if (!/^[a-zA-Z0-9._-]+$/.test(host)) {
+      throw new Error('the Electrum server is a hostname or IP on its own, with the port beside it');
+    }
+    cfg.electrumHost = host;
+  }
   if (typeof body.directions === 'string' && /^(submarine|reverse)(,(submarine|reverse))?$/.test(body.directions))
     cfg.directions = body.directions;
   if (typeof body.broadcastOffer === 'boolean') cfg.broadcastOffer = body.broadcastOffer;

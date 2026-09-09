@@ -36,8 +36,14 @@ submission: https://github.com/coreyphillips/pubky-swap-umbrel
 repo: https://github.com/coreyphillips/pubky-swap-umbrel
 support: https://github.com/coreyphillips/pubky-swap/issues
 dependencies:
+  # Only LND. The Electrum server is chosen in the app, not declared here.
+  #
+  # Declaring `electrs` makes umbrelOS require that specific app. Fulcrum and ElectrumX say
+  # `implements: electrs`, and recent umbrelOS offers them as alternatives at install time, but an
+  # older one does not: it simply refuses to install without Electrs, which is not a choice anyone
+  # running Fulcrum should have to make. Umbrel's app network is shared, so this app can reach
+  # whichever server is installed without declaring anything.
   - lightning
-  - electrs
 releaseNotes: >-
   Works with Fulcrum and ElectrumX as well as Electrs, whichever you have installed. The Electrum
   port now comes from Umbrel rather than being assumed: Electrs listens on 50001 and Fulcrum on
