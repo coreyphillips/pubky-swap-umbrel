@@ -5,6 +5,11 @@ name: build-image
 # Tag-driven, because the tag is what the app version and the image tag are derived from: they
 # have to move together or Umbrel shows one version and installs another. workflow_dispatch is
 # here for the bootstrap, and for rebuilding a version against a fixed upstream commit.
+#
+# Each architecture builds on a runner of that architecture, and a third job stitches the two into
+# one manifest list. The obvious alternative, one buildx job with `platforms: amd64,arm64`, runs
+# the arm64 half under QEMU: a Rust release build of this size took over ninety minutes and had
+# not finished. Native runners take the emulator out of the picture entirely.
 
 on:
   push:
@@ -24,15 +29,15 @@ env:
   IMAGE: ghcr.io/coreyphillips/pubky-swap-app
 
 jobs:
-  build:
+  meta:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      ref: ${{ steps.meta.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve the version and the upstream ref
+      - name: Resolve the version and the upstream commit
         id: meta
         run: |
           set -euo pipefail
@@ -46,14 +51,14 @@ jobs:
           REF="${{ github.event.inputs.pubky_swap_ref }}"
           [ -n "$REF" ] || REF=main
 
-          # Resolved to a commit here rather than left as a branch name, so the build is pinned to
-          # one commit and the release PR can say which. "main" moves; an image whose provenance is
-          # "main, at some point on Tuesday" cannot be rebuilt or audited. A SHA passed in is used
-          # as given.
+          # Resolved to a commit here rather than left as a branch name, so both architectures
+          # build the same source and the release PR can say which. "main" moves; an image whose
+          # provenance is "main, at some point on Tuesday" cannot be rebuilt or audited.
+          SHA=""
           case "$REF" in
             [0-9a-f]*) [ ${#REF} -eq 40 ] && SHA="$REF" ;;
           esac
-          if [ -z "${SHA:-}" ]; then
+          if [ -z "$SHA" ]; then
             SHA=$(git ls-remote https://github.com/coreyphillips/pubky-swap.git "$REF" | cut -f1)
             [ -n "$SHA" ] || { echo "::error::could not resolve pubky-swap ref '$REF'"; exit 1; }
           fi
@@ -62,32 +67,92 @@ jobs:
           echo "ref=$SHA" >> "$GITHUB_OUTPUT"
           echo "Building $VERSION from pubky-swap@$SHA (from '$REF')"
 
-      - uses: docker/setup-qemu-action@v3
+  build:
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Pushed by digest only. The tags go on the manifest list below, so a half-finished release
+      # never leaves a tag pointing at one architecture.
       - uses: docker/build-push-action@v6
         id: push
         with:
           context: .
           file: docker/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: ${{ matrix.platform }}
           build-args: |
-            PUBKY_SWAP_REF=${{ steps.meta.outputs.ref }}
-          tags: |
-            ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
-            ${{ env.IMAGE }}:latest
+            PUBKY_SWAP_REF=${{ needs.meta.outputs.ref }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.arch }},mode=max
 
-      # The digest is what the compose file has to name. Printing it here is what makes the
-      # release PR a copy and paste rather than a lookup.
+      - name: Hand the digest to the merge job
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${{ steps.push.outputs.digest }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  manifest:
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stitch the per-architecture images into one manifest list
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "${IMAGE}:${{ needs.meta.outputs.version }}" \
+            -t "${IMAGE}:latest" \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      # The digest of the manifest list, which is what the compose file has to name: it is the
+      # thing that resolves on every architecture. Printing it here is what makes the release PR a
+      # copy and paste rather than a lookup.
       - name: The line to put in pubky-swap/docker-compose.yml
         run: |
-          echo "image: ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}@${{ steps.push.outputs.digest }}"
+          set -euo pipefail
+          DIGEST=$(docker buildx imagetools inspect \
+            "${IMAGE}:${{ needs.meta.outputs.version }}" --format '{{json .Manifest.Digest}}' | tr -d '"')
           echo ""
-          echo "built from pubky-swap@${{ steps.meta.outputs.ref }}"
+          echo "image: ${IMAGE}:${{ needs.meta.outputs.version }}@${DIGEST}"
+          echo ""
+          echo "built from pubky-swap@${{ needs.meta.outputs.ref }}"
