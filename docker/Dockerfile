@@ -39,6 +39,12 @@ RUN cargo build --release -p swap-provider -p swap-client --features full,beigne
     && cp target/release/swap-client /usr/local/bin/swap-client \
     && strip /usr/local/bin/swap-provider /usr/local/bin/swap-client
 
+# The dashboard is built entirely on the provider's read-only status API, and reads nothing out of
+# the daemon's logs. If that feature ever falls out of the build, the panel would come up with
+# nothing to show and no error to explain it, so fail the build here instead.
+RUN /usr/local/bin/swap-provider --help | grep -q -- '--status-addr' \
+    && /usr/local/bin/swap-client --help | grep -q -- '--resume-only'
+
 # ---- Stage 2: the runtime ----
 FROM node:20-bookworm-slim
 
@@ -54,6 +60,9 @@ WORKDIR /app
 COPY web/package*.json ./
 RUN npm install --omit=dev
 COPY web/ ./
+# One icon, not two. The manifest points at pubky-swap/icon.svg in the repo and the panel serves
+# the same file as its favicon, so a redesign cannot leave the two disagreeing.
+COPY pubky-swap/icon.svg /app/public/icon.svg
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
