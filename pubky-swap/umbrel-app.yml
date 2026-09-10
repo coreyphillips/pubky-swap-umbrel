@@ -2,7 +2,7 @@ manifestVersion: 1
 id: pubky-swap
 category: bitcoin
 name: Pubky Swap
-version: "0.1.3"
+version: "0.2.0"
 tagline: Run a self-hosted Lightning to on-chain swap provider on your own node
 icon: https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/icon.svg
 gallery:
@@ -45,35 +45,32 @@ dependencies:
   # whichever server is installed without declaring anything.
   - lightning
 releaseNotes: >-
-  Electrs is no longer required. Pick your Electrum server in the app: one click for Umbrel's
-  Electrs, Fulcrum or ElectrumX, or type in one of your own. Declaring Electrs as a dependency
-  made umbrelOS insist on that one app, so running Fulcrum meant being told to install a second
-  Electrum server for a provider that does not need one.
+  A rebuilt control panel, and the fixes it took to make one worth building.
 
 
-  Previously:
-  Works with Fulcrum and ElectrumX as well as Electrs, whichever you have installed. The Electrum
-  port now comes from Umbrel rather than being assumed: Electrs listens on 50001 and Fulcrum on
-  50002, so the assumption reached one and silently failed to reach the other.
+  The panel is now tabs: what your node is doing, what you have earned, swapping your own funds,
+  every swap you have been part of, and settings. Setup asks what you want to use this for before
+  anything else, so choosing to swap your own funds no longer starts you advertising to the
+  network. It checks your node before anything starts and shows you the pubky you just loaded, so
+  you can recognise it: a wrong passphrase does not fail, it quietly gives you a different
+  identity, and that is the only place you would notice.
 
 
-  Previously:
-  First release. The app installs from a published multi-arch image rather than compiling on your
-  node.
+  Swapping your own funds worked in neither direction before this. The client was passed a flag
+  that does not exist, so every quote and every swap exited immediately on a parse error. Two
+  faults in the swap engine are fixed alongside it: a provider's hold invoice expired sooner than
+  its own counterparty would accept, so reverse swaps were refused at the last step, and a
+  restarted provider re-answered every request in its history, so one quote request could draw
+  nine quotes and the real answer was whichever arrived first.
 
 
-  Your Pubky recovery phrase never reaches the swap daemon's command line: it is written to a file
-  only the app can read, and passed by name. Anything that can read the process table on a node can
-  read another process's arguments.
+  Your own swaps' records are kept where they belong. A submarine swap's refund key is written
+  there and exists nowhere else, so the app resumes any swap it finds still open when it starts,
+  and will not delete those records.
 
 
-  The dashboard reads the daemon's own status API instead of matching patterns against its log
-  output, so health, in-flight swaps, exposure against your limits and earnings are what the daemon
-  reports rather than what a regex inferred.
-
-
-  This version ships fixes for ten defects an adversarial audit found in the swap engine, four of
-  which could lose funds, each with a regression test. See the pubky-swap changelog for detail.
+  Progress is shown per direction, because the two directions do not pass through the same states.
+  Each step says whose move it is: your node's work moves, waiting on the other side is still.
 path: ""
 defaultUsername: ""
 defaultPassword: ""
