@@ -170,8 +170,8 @@ export function detail(rows) {
 export function copyText(value, { label, mono = true, short = false } = {}) {
   if (!value) return el('span', { text: '—' });
   const shown = short ? fmt.shortKey(value, 8) : value;
-  return el('span.row', { style: { gap: '4px' } },
-    el('span' + (mono ? '.mono' : ''), { text: shown, title: value }),
+  return el('span.row.copyrow', { style: { gap: '4px' } },
+    el('span.copyval' + (mono ? '.mono' : ''), { text: shown, title: value }),
     iconButton('copy', label || 'Copy', async () => {
       const ok = await copy(value);
       toast(ok ? 'Copied' : 'Could not copy', ok ? 'ok' : 'bad');
