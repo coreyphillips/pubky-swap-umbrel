@@ -5,13 +5,22 @@ FROM rust:1-bookworm AS rust-build
 RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler git \
     && rm -rf /var/lib/apt/lists/*
 
-# Which pubky-swap to build. Pin this to a commit for a release: `main` means a rebuild months from
-# now produces a different app than the one that was tested.
+# Which pubky-swap to build.
+#
+# Pinned to a commit rather than a branch: `main` means a rebuild months from now produces a
+# different app than the one that was tested, and an Umbrel install rebuilt on a new machine would
+# silently differ from the one that was verified.
 ARG PUBKY_SWAP_REPO=https://github.com/coreyphillips/pubky-swap.git
-ARG PUBKY_SWAP_REF=main
+ARG PUBKY_SWAP_REF=5192e63227bec3bf03166f9007681180bdd1fbf6
 
 WORKDIR /src
-RUN git clone --depth 1 --branch "${PUBKY_SWAP_REF}" "${PUBKY_SWAP_REPO}" .
+# Fetched by ref rather than cloned with `--branch`, which only accepts a branch or tag name and
+# would reject the commit this is pinned to. A single-commit fetch, so pinning costs no more than
+# a shallow clone did.
+RUN git init -q . \
+    && git remote add origin "${PUBKY_SWAP_REPO}" \
+    && git fetch -q --depth 1 origin "${PUBKY_SWAP_REF}" \
+    && git checkout -q FETCH_HEAD
 # The provider advertises and serves swaps; the client swaps this node's own funds.
 RUN cargo build --release -p swap-provider -p swap-client --features full
 RUN cp target/release/swap-provider target/release/swap-client /usr/local/bin/

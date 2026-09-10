@@ -17,8 +17,10 @@ services:
       APP_PORT: 3000
 
   server:
-    build: .
-    image: pubky-swap:latest
+    # Published multi-arch by .github/workflows/build-image.yml on a v* tag. Umbrel pulls this
+    # rather than building: a Rust release build on a Raspberry Pi is not something to ask of
+    # someone installing an app.
+    image: ghcr.io/coreyphillips/pubky-swap-app:0.2.0
     container_name: pubky-swap_server_1
     restart: on-failure
     # PID 1 that reaps: the server supervises two long-lived child processes.

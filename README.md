@@ -95,15 +95,21 @@ Build args pin which engine is built: `PUBKY_SWAP_REPO` and `PUBKY_SWAP_REF`. Pi
 to a commit for a release, or a rebuild months from now produces a different app than the one that
 was tested.
 
-### Publishing for the Umbrel store
+### Cutting a release
 
-Umbrel runs on arm64 and amd64, so publish a multi-arch image and replace `build: .` in
-`docker-compose.yml` with the published `image:`:
+Tagging `v*` builds and publishes the multi-arch image:
 
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/coreyphillips/pubky-swap-umbrel:0.2.0 --push .
+git tag v0.2.0 && git push origin v0.2.0
 ```
+
+`.github/workflows/build-image.yml` builds `linux/amd64` and `linux/arm64` and pushes
+`ghcr.io/coreyphillips/pubky-swap-app:<version>` and `:latest`. Then point the `image:` in
+`docker-compose.yml` at the new tag, and bump `version` in `umbrel-app.yml`.
+
+The engine commit is pinned in two places that have to agree: `PUBKY_SWAP_REF` in the workflow,
+which is what the published image is built from, and the `ARG` default in the `Dockerfile`, which
+is what a local `docker compose build` uses.
 
 ## Running the tests
 
