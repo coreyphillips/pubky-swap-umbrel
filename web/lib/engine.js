@@ -173,7 +173,13 @@ function childEnv(configPath, extra = {}) {
     // This log is read in a browser, not a terminal. tracing colourises whenever it is not
     // writing to a tty, so without this every line arrives wrapped in escape sequences.
     NO_COLOR: '1',
-    PUBKY_SWAP_DATA_DIR: paths.providerDir,
+    // Deliberately no PUBKY_SWAP_DATA_DIR. The environment layer sits *above* the config file in
+    // the engine's precedence, so that variable does not merely locate the config, it overrides
+    // the `data_dir` inside it. Setting it to the provider's directory sent the taker's swap
+    // records there: not lost, but the panel could not find them, so a swap that had completely
+    // succeeded reported an unknown outcome, and the provider counted a taker's swaps among its
+    // own earnings. `PUBKY_SWAP_CONFIG` names the file directly, so nothing needs the data
+    // directory to find it.
     PUBKY_SWAP_CONFIG: configPath,
     ...secrets.identityEnv(),
     ...extra,
