@@ -205,6 +205,9 @@ const live = createLive({
 
 store.subscribe((snap) => {
   if (!snap) return;
+  // Setup is a flow, not a tab. Until there is an identity every tab redirects back here, so
+  // showing five of them offers a choice that is not one.
+  document.querySelector('.tabbar').classList.toggle('hidden', !snap.setup.configured);
   renderHeader(snap);
   renderBanner(snap, live.connection);
   if (!activeId) routeFromHash();

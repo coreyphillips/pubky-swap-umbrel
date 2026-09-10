@@ -168,6 +168,8 @@ a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; 
 
 /* ---------- Tabs ---------- */
 .tabbar { background: var(--bg); }
+/* With no tab bar, the header still needs a line under it. */
+.appbar:has(.tabbar.hidden) { border-bottom: 1px solid var(--line); }
 .tabbar-inner {
   position: relative; max-width: var(--page-max); margin: 0 auto;
   padding: 0 var(--s-5); display: flex; gap: var(--s-1);
