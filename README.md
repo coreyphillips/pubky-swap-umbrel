@@ -43,19 +43,44 @@ against Electrs.
 
 ## What the app does
 
-It is a small web control panel that supervises the `swap-provider` daemon.
+A tabbed control panel that supervises the swap daemons.
 
-1. Open the app and load your **Pubky identity**: paste its recovery phrase, or upload its
-   `.pkarr` recovery file. It has to be an identity that already exists, created in
+**Overview** answers three things at a glance: whether the node is healthy, how much of your money
+is committed, and whether anything is stuck. **Earn** holds your rates, what you have earned, and
+your offer rendered the way a counterparty sees it. **Swap** is the other side of the table: paste
+someone's pubky, get a quote, and swap your own funds. **Activity** is every swap, yours and the
+ones you served. **Settings** holds your identity, chain access, the diagnostics report and the
+daemon's log.
+
+Setting it up:
+
+1. Open the app. It asks what you want to use this for **before** anything else. If you only want
+   to swap your own funds, nothing is ever advertised on your behalf.
+2. Load your **Pubky identity**: paste its recovery phrase, or upload its `.pkarr` recovery file.
+   It has to be an identity that already exists, created in
    [Pubky Ring or pubky.app](https://pubky.app): the app signs in to your identity's homeserver
-   and cannot create one, so a phrase you make up has no account behind it and the provider will
-   not start.
-2. Set your **fees, amount limits and exposure limits**.
-3. Save. The provider starts, advertises your offer, and serves swaps against your LND and Electrs.
-4. Share the **Pubky it prints** with anyone who wants to swap with you.
+   and cannot create one, so a phrase you make up has no account behind it.
+3. It **checks your node** before anything starts, and shows you the pubky you just loaded so you
+   can recognise it. A wrong passphrase does not fail; it quietly derives a different identity,
+   and that screen is the only place you would notice.
+4. Set your fees and limits, and share the pubky with anyone who wants to swap with you.
 
-The dashboard shows what the daemon reports about itself: which startup checks pass, what is in
-flight, how much is committed against your limits, and what you have earned.
+Your fee is `base_fee + amount x fee_ppm / 1_000_000`, and the miner fee is quoted on top at cost.
+
+### The advertised minimum is not always the one you set
+
+The engine never advertises a swap smaller than ten times its own on-chain cost, because below
+that the fee is most of the trade. That floor is re-priced against a live fee estimate, so at
+5 sat/vB it is around 11,500 sat and at 45 sat/vB it is over 100,000. The panel shows the number
+actually being advertised, and says so when your configured minimum is not it.
+
+### Where your swap records live
+
+`${APP_DATA_DIR}/data/client/swaps` holds the records for swaps **you** took. A submarine swap's
+refund key is generated there and exists nowhere else in the world. Losing it does not fail the
+swap; it makes the on-chain output unspendable by anyone, forever. The app will not delete those
+records, resumes any it finds still open when it starts, and says so before you do anything that
+would remove them.
 
 ## Two things worth knowing
 
@@ -87,6 +112,10 @@ umbrel-app-store.yml     the community store itself (id: pubky)
 pubky-swap/              the app: manifest, compose file, icon
 docker/                  Dockerfile and entrypoint for the published image
 web/                     the control panel this image runs
+  server.js              wiring: env, routes, listen, shut down
+  lib/                   everything with a decision in it
+  public/                the panel itself: one stylesheet, ES modules, no build step
+  test/                  node --test, no dependencies
 .github/workflows/       multi-arch image build, and the release guard
 ```
 
@@ -116,6 +145,15 @@ The image compiles `swap-provider` and `swap-client` from
 [pubky-swap](https://github.com/coreyphillips/pubky-swap) with `--features full,beignet`, so an
 operator can point the provider at a [beignet](https://github.com/coreyphillips/beignet) daemon
 instead of LND without a different image. `PUBKY_SWAP_REF` selects the upstream commit.
+
+## Running the tests
+
+```bash
+cd web && npm test
+```
+
+No dependencies and no runner to install. The suite is deliberately small: it locks the handful of
+behaviours where a regression would cost money or leak a secret, rather than aiming at coverage.
 
 ## License
 
