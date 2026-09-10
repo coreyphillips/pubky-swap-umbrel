@@ -46,11 +46,15 @@ against Electrs.
 A tabbed control panel that supervises the swap daemons.
 
 **Overview** answers three things at a glance: whether the node is healthy, how much of your money
-is committed, and whether anything is stuck. **Earn** holds your rates, what you have earned, and
-your offer rendered the way a counterparty sees it. **Swap** is the other side of the table: paste
-someone's pubky, get a quote, and swap your own funds. **Activity** is every swap, yours and the
-ones you served. **Settings** holds your identity, chain access, the diagnostics report and the
-daemon's log.
+is committed, and whether anything is stuck. **Earn** holds your rates, what you have earned, your
+offer rendered the way a counterparty sees it, and the buttons that stop and restart the provider.
+**Swap** is the other side of the table: paste someone's pubky, get a quote, and swap your own
+funds. **Activity** is every swap, yours and the ones you served. **Settings** holds your identity,
+chain access, the same provider controls, the diagnostics report and the daemon's log.
+
+Stopping is never silent about what it costs you. A stopped provider is not driving the swaps it
+has already committed to, so a refund that comes due is not broadcast until you start it again. If
+anything is in flight the button says exactly that, with the count, before you confirm.
 
 Setting it up:
 

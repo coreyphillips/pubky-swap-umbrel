@@ -2,7 +2,7 @@ manifestVersion: 1
 id: pubky-swap
 category: bitcoin
 name: Pubky Swap
-version: "0.2.0"
+version: "0.2.1"
 tagline: Run a self-hosted Lightning to on-chain swap provider on your own node
 icon: https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/icon.svg
 gallery:
@@ -45,32 +45,26 @@ dependencies:
   # whichever server is installed without declaring anything.
   - lightning
 releaseNotes: >-
-  A rebuilt control panel, and the fixes it took to make one worth building.
+  Fixes on top of the rebuilt panel.
 
 
-  The panel is now tabs: what your node is doing, what you have earned, swapping your own funds,
-  every swap you have been part of, and settings. Setup asks what you want to use this for before
-  anything else, so choosing to swap your own funds no longer starts you advertising to the
-  network. It checks your node before anything starts and shows you the pubky you just loaded, so
-  you can recognise it: a wrong passphrase does not fail, it quietly gives you a different
-  identity, and that is the only place you would notice.
+  You can stop and restart the provider from the app now. The buttons are on Earn, next to the
+  rates they affect, and in Settings, where someone looking for a stop button expects to find one.
+  Stopping is not silent about what it costs you: a stopped provider is not driving the swaps it
+  has already committed to, so a refund that comes due is not broadcast until you start it again,
+  and if anything is in flight the button says exactly that, with the count, before you confirm.
 
 
-  Swapping your own funds worked in neither direction before this. The client was passed a flag
-  that does not exist, so every quote and every swap exited immediately on a parse error. Two
-  faults in the swap engine are fixed alongside it: a provider's hold invoice expired sooner than
-  its own counterparty would accept, so reverse swaps were refused at the last step, and a
-  restarted provider re-answered every request in its history, so one quote request could draw
-  nine quotes and the real answer was whichever arrived first.
+  The panel fits a phone. At a phone's width the page laid out wider than the screen, so cards ran
+  off the right edge and the Stop button sat half off it.
 
 
-  Your own swaps' records are kept where they belong. A submarine swap's refund key is written
-  there and exists nowhere else, so the app resumes any swap it finds still open when it starts,
-  and will not delete those records.
+  The tabs are hidden while you are still setting up. They were visible but not yet reachable, so
+  pressing one bounced you back to setup and looked broken.
 
 
-  Progress is shown per direction, because the two directions do not pass through the same states.
-  Each step says whose move it is: your node's work moves, waiting on the other side is still.
+  Your offer reads "they send on-chain or they receive on-chain". It said "and", which parses as
+  one confused sentence about a single swap rather than two things a counterparty can pick from.
 path: ""
 defaultUsername: ""
 defaultPassword: ""
