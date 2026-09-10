@@ -23,11 +23,15 @@ export default {
   mount(root) {
     logView = createLogView({ title: 'Provider log' });
     fill(root, el('div.stack', {},
+      // Identity first because it is what everything else depends on, then the daemon, because
+      // "stop this" is the thing someone opens Settings to do. Diagnostics and the backends are
+      // what you read when one of those two is wrong, and Advanced is below both because it is
+      // where you go on purpose rather than by accident.
       el('div', { attrs: { id: 'stIdentity' } }),
+      el('div', { attrs: { id: 'stProvider' } }),
       el('div', { attrs: { id: 'stDiag' } }),
       el('div', { attrs: { id: 'stElectrum' } }),
       el('div', { attrs: { id: 'stAdvanced' } }),
-      el('div', { attrs: { id: 'stProvider' } }),
       el('div', { attrs: { id: 'stLog' } }),
       el('div', { attrs: { id: 'stDanger' } })));
     fill(root.querySelector('#stLog'), c.card({ title: 'Provider log' }, logView.node));
