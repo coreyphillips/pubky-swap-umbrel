@@ -226,10 +226,18 @@ export function exposureLine(swap, { role = 'provider' } = {}) {
     : 'Nothing of yours is committed.';
 }
 
-export function directionLabel(direction, { role = 'provider' } = {}) {
+/**
+ * Which way the sats went, from the reader's side of the table.
+ *
+ * The technical names appear nowhere here: nobody thinks in submarine and reverse, they think
+ * about which side their coins end up on. `short` is for a table column, where the full phrasing
+ * would dominate the row.
+ */
+export function directionLabel(direction, { role = 'provider', short = false } = {}) {
   if (role === 'client') {
     return direction === 'submarine' ? 'Send on-chain' : 'Receive on-chain';
   }
+  if (short) return direction === 'submarine' ? 'They sent' : 'They received';
   return direction === 'submarine' ? 'They sent on-chain' : 'They received on-chain';
 }
 

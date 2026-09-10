@@ -10,6 +10,7 @@ import * as c from '../components.js';
 import { api } from '../api.js';
 import { toast } from '../toast.js';
 import { createLogView } from '../logview.js';
+import { describeProvider, providerControls } from '../providerstate.js';
 
 let logView = null;
 let advancedOpen = false;
@@ -26,6 +27,7 @@ export default {
       el('div', { attrs: { id: 'stDiag' } }),
       el('div', { attrs: { id: 'stElectrum' } }),
       el('div', { attrs: { id: 'stAdvanced' } }),
+      el('div', { attrs: { id: 'stProvider' } }),
       el('div', { attrs: { id: 'stLog' } }),
       el('div', { attrs: { id: 'stDanger' } })));
     fill(root.querySelector('#stLog'), c.card({ title: 'Provider log' }, logView.node));
@@ -36,6 +38,7 @@ export default {
     fill(root.querySelector('#stDiag'), diagnosticsCard(snap));
     if (!electrumDirty) fill(root.querySelector('#stElectrum'), electrumCard(snap));
     fill(root.querySelector('#stAdvanced'), advancedCard(snap));
+    fill(root.querySelector('#stProvider'), providerCard(snap));
     fill(root.querySelector('#stDanger'), dangerCard(snap));
   },
 
@@ -257,6 +260,47 @@ function advancedCard(snap) {
           toast('Saved. Restart the provider to apply.', 'ok');
         },
       })));
+}
+
+/**
+ * The daemon itself: what it is doing, and the buttons that change that.
+ *
+ * The same card is on Earn, next to the rates it affects. It is here too because this is where
+ * someone looks for a stop button, and a control you have to remember the location of is a control
+ * you cannot find when you need it. Both render from one module, so they cannot disagree about
+ * whether stopping mid-swap is safe.
+ */
+function providerCard(snap) {
+  const p = snap.provider;
+  const { label, tone, body } = describeProvider(snap);
+
+  if (snap.settings.role === 'taker' && p.state === 'stopped') {
+    return c.card({ title: 'Provider', actions: [c.badge('not advertising', 'idle')] },
+      el('p.muted', { text: 'This node is set up to swap its own funds only, so no provider runs.' }),
+      el('div.actions', {}, c.button({
+        label: 'Start earning too',
+        onClick: async () => {
+          await api.saveSettings({ role: 'both' });
+          await api.startProvider();
+          toast('Provider starting', 'ok');
+        },
+      })));
+  }
+
+  return c.card({
+    title: 'Provider',
+    actions: [c.badge(label, tone, { dot: true, pulse: tone === 'ok' })],
+    meta: p.uptimeSecs ? `up ${fmt.duration(p.uptimeSecs)}` : null,
+  },
+    el('p.muted', { text: body }),
+    p.fatal ? c.note('The engine said:', { tone: 'bad', quoted: p.fatal.message }) : null,
+    p.restartInSecs != null ? el('p.small.muted', { text: `Next attempt in ${p.restartInSecs}s.` }) : null,
+    c.detail([
+      ['Engine', p.engineVersion ? `pubky-swap ${p.engineVersion}` : null],
+      ['Protocol', p.protocolVersion == null ? null : String(p.protocolVersion)],
+      ['In flight', p.inFlight == null ? null : String(p.inFlight)],
+    ]),
+    el('div.actions', {}, ...providerControls(snap)));
 }
 
 function dangerCard(snap) {
