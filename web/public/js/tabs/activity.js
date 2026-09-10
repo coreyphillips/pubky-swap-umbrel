@@ -135,6 +135,7 @@ function tableCard(snap, root) {
   const table = el('table', {},
     el('thead', {}, el('tr', {},
       el('th', { text: '' }),
+      el('th', { text: 'Direction' }),
       el('th', { text: 'Amount' }),
       el('th', { text: 'Counterparty' }),
       el('th', { text: 'Progress' }),
@@ -173,6 +174,9 @@ function row(swap, snap) {
     attrs: { tabindex: '0', role: 'button', 'aria-label': `${directionLabel(swap.direction, { role: swap.role })}, ${fmt.sats(swap.onchain_amount_sat)}, ${d.headline}` },
   },
     el('td', {}, c.badge(swap.role === 'client' ? 'yours' : 'served', swap.role === 'client' ? 'accent' : 'idle')),
+    // Which way the sats went. Without it the table says how much and to whom and never what
+    // happened, and the two directions put your money in opposite places.
+    el('td.small.muted', { text: directionLabel(swap.direction, { role: swap.role, short: true }) }),
     el('td.num', { text: fmt.sats(swap.onchain_amount_sat) }),
     el('td.mono.small', { text: fmt.shortKey(swap.peer) }),
     el('td', {}, el('div.row', { style: { gap: 'var(--s-2)' } }, track(swap, { compact: true }), el('span.small.muted', { text: d.headline }))),

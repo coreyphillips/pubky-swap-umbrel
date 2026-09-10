@@ -10,6 +10,7 @@ import * as fmt from '../format.js';
 import * as c from '../components.js';
 import { api } from '../api.js';
 import { toast } from '../toast.js';
+import { describeProvider, providerControls } from '../providerstate.js';
 
 let fields = null;
 let dirty = false;
@@ -63,52 +64,13 @@ function providerCard(snap) {
       }));
   }
 
-  const views = {
-    stopped: ['Stopped', 'idle', 'Not advertising. Swaps already in flight are not being driven while this is off.'],
-    starting: ['Starting', 'info', 'Connecting to your node.'],
-    running: p.capable
-      ? ['Live', 'ok', 'Advertising and serving swaps.']
-      : ['Quoting only', 'warn', 'You are discoverable and you will quote a price, but every swap request is rejected until the checks below pass. Nobody loses money; they just cannot swap with you.'],
-    unreachable: ['Not answering', 'warn', 'The provider is running but its status API is not responding. It has not been restarted: a provider in the middle of a swap is still driving money.'],
-    restarting: ['Restarting', 'warn', `Restarting after an unexpected exit (attempt ${p.restartCount}).`],
-    refusing: ['Held back', 'bad', 'The provider refused to start on purpose, because starting would abandon swaps that are still in flight. This is not a crash.'],
-    failed: ['Refused to start', 'bad', 'The provider will not start with these settings.'],
-    stopping: ['Stopping', 'idle', 'Unwinding cleanly.'],
-  };
-  const [label, tone, body] = views[p.state] || ['Unknown', 'idle', ''];
-
-  const actions = [];
-  if (p.state === 'stopped' || p.state === 'failed' || p.state === 'refusing') {
-    actions.push(c.button({ label: 'Start', variant: 'primary', busyLabel: 'Starting', onClick: () => api.startProvider() }));
-  } else {
-    actions.push(c.button({ label: 'Restart', busyLabel: 'Restarting', onClick: () => api.restartProvider() }));
-    actions.push(c.button({ label: 'Stop', onClick: () => stopProvider(snap) }));
-  }
+  const { label, tone, body } = describeProvider(snap);
 
   return c.card({ title: 'Provider', actions: [c.badge(label, tone, { dot: true, pulse: tone === 'ok' })] },
     el('p.muted', { text: body }),
     p.fatal ? c.note('The engine said:', { tone: 'bad', quoted: p.fatal.message }) : null,
     p.restartInSecs != null ? el('p.small.muted', { text: `Next attempt in ${p.restartInSecs}s.` }) : null,
-    el('div.actions', {}, ...actions));
-}
-
-function stopProvider(snap) {
-  const inFlight = (snap.provider && snap.provider.inFlight) || 0;
-  if (!inFlight) return api.stopProvider();
-  // A stop with money in flight is worth one sentence about what it actually means.
-  const m = c.modal({
-    title: 'Stop the provider?',
-    body: el('div', {},
-      el('p', { text: `Nobody will find you and no new swaps will start. ${inFlight} swap${inFlight === 1 ? ' is' : 's are'} still in flight, and while the provider is stopped nothing is driving ${inFlight === 1 ? 'it' : 'them'} -- a refund that comes due will not be broadcast until you start it again.` }),
-    ),
-    actions: [
-      c.button({ label: 'Cancel', onClick: () => m.close() }),
-      c.button({
-        label: 'Stop anyway', variant: 'danger',
-        onClick: async () => { m.close(); await api.stopProvider(); toast('Provider stopping'); },
-      }),
-    ],
-  });
+    el('div.actions', {}, ...providerControls(snap)));
 }
 
 function earningsCard(snap) {
@@ -135,9 +97,11 @@ function ratesCard(snap) {
   const o = snap.offer;
 
   const base = c.numberField({ label: 'Flat fee', value: s.baseFee, min: 0, max: 1e9, unit: 'sat', onInput: onEdit });
+  // Labelled for what it is rather than for its unit: "Percentage" over a box containing 2500 and
+  // a hint reading 0.25% reads as a contradiction.
   const ppm = c.numberField({
-    label: 'Percentage', value: s.feePpm, min: 0, max: 1e7, unit: 'ppm', onInput: onEdit,
-    hint: `${(s.feePpm / 10000).toFixed(2)}% of the amount`,
+    label: 'Proportional fee', value: s.feePpm, min: 0, max: 1e7, unit: 'ppm', onInput: onEdit,
+    hint: `${(s.feePpm / 10000).toFixed(2)}% of the swap amount`,
   });
   const min = c.numberField({ label: 'Smallest swap', value: s.minAmount, min: 1, max: 1e12, unit: 'sat', onInput: onEdit });
   const max = c.numberField({ label: 'Largest swap', value: s.maxAmount, min: 1, max: 1e12, unit: 'sat', onInput: onEdit });
