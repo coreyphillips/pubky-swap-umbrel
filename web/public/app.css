@@ -121,6 +121,11 @@ a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; 
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 .mono { font-family: var(--mono); }
+/* A pubky is 52 characters with no break in it, so on a phone one unwrapped copy of it made the
+   whole page wider than the screen. Wrapped rather than truncated: it is a value people read off
+   and compare against another app, and an ellipsis in the middle defeats that. */
+.copyrow { min-width: 0; flex-wrap: wrap; }
+.copyval { overflow-wrap: anywhere; min-width: 0; }
 .num { font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 .faint { color: var(--faint); }
@@ -203,6 +208,23 @@ a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; 
 
 /* ---------- Layout ---------- */
 .page { max-width: var(--page-max); margin: 0 auto; padding: var(--s-5) var(--s-5) var(--s-12); }
+
+/* Grid tracks are capped, not just their items.
+ *
+ * A grid with no explicit columns gets one implicit `auto` track, and `auto` resolves to the
+ * content's max-content width with no ceiling. A card full of numbers has a wide one, so on a
+ * phone the track grew past the viewport and took the page with it: cards ran off the right edge
+ * and Stop sat half off-screen.
+ *
+ * `min-width: 0` on the items is not the fix, which is worth writing down because it is the usual
+ * advice. Measured in the browser: with the item floored at zero the card stayed 472px in a 366px
+ * container; capping the track brought it to 366. The items keep the floor anyway, for the flex
+ * children inside them. */
+.stack { grid-template-columns: minmax(0, 1fr); }
+.stack > *, .grid > * { min-width: 0; }
+/* Cards sitting side by side share a height. The grid stretches the wrappers already; without
+   this the card inside one of them stops at its content and the row looks ragged. */
+.grid > * > .card, .grid > .card { height: 100%; }
 .banner-slot:not(:empty) { margin-bottom: var(--gutter); }
 .grid { display: grid; gap: var(--gutter); }
 .grid.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -247,7 +269,7 @@ a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; 
   margin-top: var(--s-1); color: var(--text);
   font-size: var(--t-lg); font-weight: 650; letter-spacing: var(--track-tight);
   font-variant-numeric: tabular-nums;
-  display: flex; align-items: baseline; gap: 5px; min-width: 0;
+  display: flex; align-items: baseline; gap: 5px; min-width: 0; flex-wrap: wrap;
 }
 .stat-value.hero { font-size: var(--t-xl); }
 .stat-unit { font-size: var(--t-xs); font-weight: 500; color: var(--muted); letter-spacing: 0; }
