@@ -160,7 +160,7 @@ function offerCard(snap) {
         : c.note('Nothing is being advertised while the provider is stopped.', { tone: 'idle' }));
   }
   const rows = [
-    ['Directions', (o.directions || []).map((d) => (d === 'submarine' ? 'they send on-chain' : 'they receive on-chain')).join(' and ')],
+    ['Directions', fmt.directions(o.directions)],
     ['Amounts', `${fmt.sats(o.effective_min_amount_sat)} to ${fmt.sats(o.max_amount_sat)}`],
     ['Your fee', `${fmt.sats(o.base_fee_sat)} + ${(o.fee_ppm / 10000).toFixed(2)}%`],
     ['Miner fee', `${fmt.sats(o.onchain_fee_sat)} at ${o.fee_rate_sat_vb} sat/vB, charged on top`],

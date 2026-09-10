@@ -212,7 +212,7 @@ function offerCard(snap) {
           c.copyText(p.pubky))
       : null,
     c.detail([
-      ['Direction', (o.directions || []).map((d) => (d === 'submarine' ? 'they send on-chain' : 'they receive on-chain')).join(' and ')],
+      ['Directions', fmt.directions(o.directions)],
       ['Amount', `${fmt.sats(o.effective_min_amount_sat)} to ${fmt.sats(o.max_amount_sat)}`],
       ['Fee', `${fmt.sats(o.base_fee_sat)} + ${(o.fee_ppm / 10000).toFixed(2)}%, plus ${fmt.sats(o.onchain_fee_sat)} miner fee`],
       ['On 500,000 sat', `they pay ${fmt.sats(fmt.feeOn(500000, o.base_fee_sat, o.fee_ppm) + o.onchain_fee_sat)} in total fees`],

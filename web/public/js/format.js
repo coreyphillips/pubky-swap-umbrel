@@ -89,3 +89,14 @@ export function feeOn(amount, baseFee, feePpm) {
 export function titleCase(s) {
   return String(s || '').replace(/[_.-]+/g, ' ').replace(/^./, (c) => c.toUpperCase());
 }
+
+// The offer's directions, worded from the taker's side because that is who reads the offer.
+//
+// Joined with "or", not "and": a taker picks one. "They send on-chain and they receive on-chain"
+// reads as a single confused sentence about one swap rather than two things on the menu.
+export function directions(list) {
+  const phrase = (d) => (d === 'submarine' ? 'they send on-chain' : 'they receive on-chain');
+  const words = (list || []).map(phrase);
+  if (!words.length) return null;
+  return words.join(' or ');
+}
