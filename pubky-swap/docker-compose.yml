@@ -21,7 +21,7 @@ services:
     # version's build published, and proves it exists: main must never name an image that has not
     # been built yet, or every Umbrel that syncs the store tries to pull something that is not
     # there and hangs on "Starting". See .github/workflows/check-release.yml.
-    image: ghcr.io/coreyphillips/pubky-swap-app:0.2.0@sha256:fc8dea1a797de634a4d006beecfe6ee79e064a4849396c8a331dbaa0d59958fa
+    image: ghcr.io/coreyphillips/pubky-swap-app:0.2.1@sha256:112e78b06b64193eca030c714f4adee0b7e24a76dd28f2fad9898fdd5d6ee129
     restart: on-failure
     init: true
     stop_grace_period: 1m
