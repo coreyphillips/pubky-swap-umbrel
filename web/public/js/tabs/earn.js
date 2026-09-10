@@ -241,7 +241,12 @@ function offerCard(snap) {
   if (!o) return null;
 
   return c.card({ title: 'Your offer, as others see it' },
-    p.pubky ? el('div', { style: { 'margin-bottom': 'var(--s-3)' } }, c.copyText(p.pubky, { label: 'Copy your pubky' })) : null,
+    p.pubky
+      ? el('div', { style: { 'margin-bottom': 'var(--s-4)' } },
+          el('div.field-label', { text: 'Your pubky' }),
+          el('p.small.muted', { text: 'Share this with anyone who wants to swap with you. It is not a secret.' }),
+          c.copyText(p.pubky))
+      : null,
     c.detail([
       ['Direction', (o.directions || []).map((d) => (d === 'submarine' ? 'they send on-chain' : 'they receive on-chain')).join(' and ')],
       ['Amount', `${fmt.sats(o.effective_min_amount_sat)} to ${fmt.sats(o.max_amount_sat)}`],

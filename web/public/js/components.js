@@ -58,11 +58,15 @@ export function button({ label, variant, size, onClick, busyLabel, disabled, tit
  * markup had, with every label a bare element next to its input.
  */
 let fieldSeq = 0;
-export function field({ label, hint, note, control, id }) {
-  const controlId = id || control.id || `f${++fieldSeq}`;
-  control.id = controlId;
+export function field({ label, hint, note, control, labelFor, id }) {
+  // `labelFor` exists because a control is sometimes wrapped: a number field with a unit puts its
+  // input inside a positioned box. The label has to point at the focusable input, not the wrapper,
+  // and the wrapper is what gets laid out.
+  const target = labelFor || control;
+  const controlId = id || target.id || `f${++fieldSeq}`;
+  target.id = controlId;
   const hintId = hint ? `${controlId}-hint` : null;
-  if (hintId) control.setAttribute('aria-describedby', hintId);
+  if (hintId) target.setAttribute('aria-describedby', hintId);
   return el('div.field', {},
     el('label.field-label', { text: label, attrs: { for: controlId } }),
     control,
@@ -86,15 +90,20 @@ export function numberField({ label, hint, value, min, max, unit, id, onInput })
   const input = el('input', {
     attrs: {
       type: 'text', inputmode: 'numeric', autocomplete: 'off',
-      value: value == null ? '' : String(value),
       placeholder: value == null ? '' : String(value),
     },
   });
+  // The property, not just the attribute: the attribute is only the default value, and `read()`
+  // has to be right before anyone has typed anything.
+  input.value = value == null ? '' : String(value);
+  // Built once and handed to `field` already wrapped. The previous spelling built the wrapper,
+  // then let `field` append the bare input, which moved it out of the wrapper, and then swapped
+  // the now-empty wrapper in for it -- so every field with a unit rendered its label and its unit
+  // and no input at all, and there was nothing to type into.
   const wrap = unit
     ? el('div.input-suffix', {}, input, el('span', { text: unit }))
     : input;
-  const node = field({ label, hint, control: input, id });
-  if (unit) node.replaceChild(wrap, input);
+  const node = field({ label, hint, control: wrap, labelFor: input, id });
 
   const error = el('div.field-error');
   node.appendChild(error);
@@ -167,6 +176,25 @@ export function copyText(value, { label, mono = true, short = false } = {}) {
       const ok = await copy(value);
       toast(ok ? 'Copied' : 'Could not copy', ok ? 'ok' : 'bad');
     }));
+}
+
+/**
+ * A button that copies, and says what it copies.
+ *
+ * `copyText` shows the value with a small copy icon beside it, which reads fine under a label in a
+ * detail list and reads as a stray random string anywhere else. Where there is no label to sit
+ * under, use this.
+ */
+export function copyButton(value, label, { variant, size } = {}) {
+  return button({
+    label,
+    variant,
+    size,
+    onClick: async () => {
+      const ok = await copy(value);
+      toast(ok ? 'Copied' : 'Could not copy', ok ? 'ok' : 'bad');
+    },
+  });
 }
 
 const ICONS = {

@@ -123,7 +123,7 @@ function inFlightCard(snap) {
         body: snap.provider.capable
           ? 'Your offer is live. Swaps appear here the moment someone takes one.'
           : 'Swaps you provide and swaps you take both show up here.',
-        action: pubky ? c.copyText(pubky, { label: 'Copy your pubky', short: true }) : null,
+        action: pubky ? c.copyButton(pubky, 'Copy your pubky') : null,
       }));
   }
 
