@@ -116,6 +116,7 @@ class Taker {
     }
     this.lastQuoteAt.set(provider, Date.now());
     this.quotesInFlight++;
+    this.logs.note(`Asking ${provider} for a ${direction} quote of ${amount} sat.`);
 
     fs.mkdirSync(paths.quoteDir, { recursive: true });
     const dir = fs.mkdtempSync(path.join(paths.quoteDir, 'q-'));
@@ -125,7 +126,7 @@ class Taker {
         path.join(dir, 'config.toml'),
         engine.clientConfig(cfg, { dataDir: dir, provider, direction, amount }),
       );
-      const { stdout, code } = await runClient(['--quote-only'], configFile, QUOTE_TERM_MS);
+      const { stdout, code } = await runClient(['--quote-only'], configFile, QUOTE_TERM_MS, this.logs);
       const parsed = parseQuoteLine(stdout);
       if (parsed) return parsed;
       throw httpError(200, 'NO_QUOTE', quoteFailureMessage(stdout, code), refusalFrom(stdout));
@@ -337,7 +338,7 @@ class Taker {
         path.join(dir, 'config.toml'),
         engine.clientConfig(settings.load(), { dataDir: dir }),
       );
-      const { stdout, code } = await runClient(['--resume-only'], configFile, QUOTE_TERM_MS);
+      const { stdout, code } = await runClient(['--resume-only'], configFile, QUOTE_TERM_MS, this.logs);
       const m = /Client pubky:\s*(\S+)/.exec(stdout);
       if (m) return { pubky: m[1] };
       throw httpError(400, 'IDENTITY_FAILED', identityFailureMessage(stdout, code), refusalFrom(stdout));
@@ -410,16 +411,28 @@ function sweepQuoteDirs(taker) {
   return total;
 }
 
-/** Run the client to completion, bounded. Used only for quotes, which must not run long. */
-function runClient(args, configFile, termMs) {
+/**
+ * Run the client to completion, bounded. Used for quotes and identity checks, neither of which
+ * should run long.
+ *
+ * Output goes to the log buffer as well as to the caller. A quote that fails does so for reasons
+ * worth reading -- a provider that never answered, a refusal naming exactly what was wrong with
+ * the price -- and those lines used to be captured for the return value and then dropped, so the
+ * panel's log showed nothing at all for a check that had just failed in front of you.
+ */
+function runClient(args, configFile, termMs, logs) {
   return new Promise((resolve, reject) => {
     let child;
     try { child = spawn(BIN, args, { env: engine.childEnv(configFile), stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { return reject(httpError(500, 'CLIENT_MISSING', `Could not run the swap engine: ${e.message}`)); }
     let stdout = '';
-    const capture = (d) => { stdout += d.toString(); if (stdout.length > 200000) stdout = stdout.slice(-200000); };
-    child.stdout.on('data', capture);
-    child.stderr.on('data', capture);
+    const capture = (stream) => (d) => {
+      stdout += d.toString();
+      if (stdout.length > 200000) stdout = stdout.slice(-200000);
+      if (logs) logs.push(d, stream);
+    };
+    child.stdout.on('data', capture('out'));
+    child.stderr.on('data', capture('err'));
     const term = setTimeout(() => { try { child.kill('SIGTERM'); } catch {} }, termMs);
     const hard = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, termMs + QUOTE_KILL_MS);
     child.on('error', (e) => {
