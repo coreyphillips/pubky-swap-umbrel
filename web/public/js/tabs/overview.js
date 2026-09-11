@@ -8,7 +8,7 @@
 import { el, fill } from '../dom.js';
 import * as fmt from '../format.js';
 import * as c from '../components.js';
-import { track, describeSwap } from '../swapview.js';
+import { track, describeSwap, retryPhrase } from '../swapview.js';
 
 export default {
   id: 'overview',
@@ -52,7 +52,8 @@ function healthCard(snap) {
 
   const tone = h.failures ? 'bad' : h.warnings ? 'warn' : 'ok';
   const summary = h.failures
-    ? `${h.failures} check${h.failures === 1 ? '' : 's'} need attention`
+    // The verb agrees with the count too, not just the noun.
+    ? `${h.failures} check${h.failures === 1 ? ' needs' : 's need'} attention`
     : h.warnings
       ? `${h.warnings} warning${h.warnings === 1 ? '' : 's'}`
       : 'Everything checks out';
@@ -147,8 +148,10 @@ function inFlightCard(snap) {
           track(swap, { compact: true }),
           el('span.small.muted', { text: d.headline }),
           el('span.spacer'),
+          // The track already carries "needs recovery", so repeating it here would spend the one
+          // slot on the row saying the same thing twice. Say when it will next try instead.
           d.kind === 'recovery'
-            ? c.badge('needs recovery', 'bad')
+            ? el('span.small', { style: { color: 'var(--bad)' }, text: retryPhrase(d.retryAt) || 'retrying' })
             : d.kind === 'stalled'
               ? c.badge(`no movement for ${fmt.duration(d.stalledFor)}`, 'warn')
               : el('span.small.faint', { text: fmt.relTime(swap.updated_at_unix) }));

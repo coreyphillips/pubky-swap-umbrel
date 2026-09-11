@@ -144,3 +144,12 @@ test('the substitution does not mutate the shared track', () => {
   sv.describeSwap({ direction: 'reverse', state: 'created', awaiting_invoice: true, updated_at_unix: NOW }, { nowUnix: NOW });
   assert.equal(sv.stepsFor('reverse')[0].label, 'Invoice issued');
 });
+
+test('the compact track says so, because a table row has nowhere else to say it', () => {
+  // In the Activity table the headline is the step label, which for a swap in recovery reads as
+  // ordinary progress ("They claimed on-chain"). Caught by looking at a screenshot of the running
+  // panel, not by the assertions above, which were all satisfied while the row still looked fine.
+  const node = sv.track(retrying(), { compact: true });
+  assert.match(node.textContent, /needs recovery/);
+  assert.match(node.getAttribute('aria-label') || '', /^Needs recovery: /);
+});

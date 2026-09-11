@@ -511,6 +511,7 @@ tbody tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-off
 .track.frozen { opacity: 0.58; filter: saturate(0.45); }
 .track-cap { margin-left: 7px; font-size: var(--t-xs); font-weight: 600; white-space: nowrap; }
 .track-cap[data-kind="failed"] { color: var(--bad); }
+.track-cap[data-kind="recovery"] { color: var(--bad); }
 .track-cap[data-kind="unwound"] { color: var(--idle); }
 .track.compact .track-conn { width: 12px; }
 .track.compact .track-dot { width: 7px; height: 7px; }

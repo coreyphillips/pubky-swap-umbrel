@@ -208,6 +208,11 @@ export function track(swap, { compact = false } = {}) {
     node.appendChild(el('span.track-cap', { text: d.headline.toLowerCase(), dataset: { kind: 'unwound' } }));
   } else if (d.kind === 'failed') {
     node.appendChild(el('span.track-cap', { text: 'failed', dataset: { kind: 'failed' } }));
+  } else if (d.kind === 'recovery') {
+    // The track is the only thing carrying this in a dense table row, where the headline is the
+    // step label and reads as ordinary progress. Without the cap the row for a swap the engine has
+    // given up driving is indistinguishable from a healthy one.
+    node.appendChild(el('span.track-cap', { text: 'needs recovery', dataset: { kind: 'recovery' } }));
   }
   return node;
 }
