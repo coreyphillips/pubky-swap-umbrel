@@ -11,7 +11,7 @@ import { el, fill } from '../dom.js';
 import * as fmt from '../format.js';
 import * as c from '../components.js';
 import { api } from '../api.js';
-import { track, stepList, describeSwap, exposureLine, timeoutLine, directionLabel } from '../swapview.js';
+import { track, stepList, describeSwap, exposureLine, timeoutLine, directionLabel, retryPhrase } from '../swapview.js';
 
 let filter = 'all';
 let search = '';
@@ -46,12 +46,23 @@ function allSwaps(snap) {
   return [...provider, ...taker].sort((a, b) => b.updated_at_unix - a.updated_at_unix);
 }
 
-function needsAttention(snap) {
-  const now = Math.floor(Date.now() / 1000);
+// Exported for the regression test: the membership rule here is the difference between an alarm
+// that means something and one that cries wolf, and it has already been wrong once.
+export function needsAttention(snap) {
+  // The server's clock, when the snapshot carries one. Every timestamp compared here was stamped
+  // by the daemon, so measuring them against the browser's clock imports whatever skew the viewing
+  // device has into a decision about whether money is stuck.
+  const now = snap.now_unix || Math.floor(Date.now() / 1000);
   return allSwaps(snap).filter((s) => {
     const terminal = ['claimed', 'refunded', 'expired', 'failed'].includes(s.state);
     if (!terminal && s.role === 'client' && snap.taker.state === 'idle') return true;
     if (s.reorg_seen_at_height && !terminal) return true;
+    // The daemon's own verdict that it cannot drive this swap. Kept separate from the rule below
+    // rather than folded into it: that one is arithmetic on a timestamp, and a swap in the recovery
+    // loop keeps its timestamp fresh forever, so it would never qualify.
+    if (s.needs_recovery && !terminal) return true;
+    // Still load-bearing despite the clause above: a taker record carries no `needs_recovery` at
+    // all, so this is the only thing that catches one that went quiet holding an error.
     if (s.last_error && !terminal && now - s.updated_at_unix > 600) return true;
     return false;
   });
@@ -74,16 +85,30 @@ function alarmsCard(snap) {
           onClick: async () => { await api.ackNotice(n.code); },
         })],
       })),
-      ...stuck.map((s) => el('div.row', {},
-        c.badge(s.role === 'client' ? 'yours' : 'served', s.role === 'client' ? 'accent' : 'idle'),
-        el('span.num', { text: fmt.sats(s.onchain_amount_sat) }),
-        track(s, { compact: true }),
-        el('span.small.muted', { text: 'open, and nothing is driving it' }),
-        el('span.spacer'),
-        c.button({
-          label: 'Resume', size: 'sm', variant: 'primary',
-          onClick: async () => { await api.resumeSwaps(); },
-        })))));
+      // Two different things land in this list and they want opposite words. A record nothing is
+      // driving needs someone to start driving it, and Resume does that. A swap the engine is
+      // already retrying does not: "nothing is driving it" would be false, and offering Resume
+      // would imply the operator can fix it by pressing a button.
+      ...stuck.map((s) => {
+        const retrying = Boolean(s.needs_recovery);
+        return el('div.row', {},
+          c.badge(s.role === 'client' ? 'yours' : 'served', s.role === 'client' ? 'accent' : 'idle'),
+          el('span.num', { text: fmt.sats(s.onchain_amount_sat) }),
+          track(s, { compact: true }),
+          el('span.small.muted', {
+            text: retrying
+              ? [s.last_error || 'the engine cannot make progress', retryPhrase(s.next_retry_at_unix)]
+                .filter(Boolean).join('. ')
+              : 'open, and nothing is driving it',
+          }),
+          el('span.spacer'),
+          retrying
+            ? null
+            : c.button({
+              label: 'Resume', size: 'sm', variant: 'primary',
+              onClick: async () => { await api.resumeSwaps(); },
+            }));
+      })));
 }
 
 const FILTERS = [
@@ -217,8 +242,23 @@ function detailModal(swap, snap) {
       d.kind === 'failed' && d.reason
         ? c.note('The engine said:', { tone: 'bad', quoted: d.reason })
         : null,
+      d.kind === 'recovery'
+        ? c.note(
+          [
+            'The engine cannot make progress on this swap and is retrying on its own.',
+            retryPhrase(d.retryAt),
+            d.retries ? `${d.retries} attempts so far.` : null,
+          ].filter(Boolean).join(' '),
+          { tone: 'bad', title: 'Needs recovery', quoted: d.reason || null })
+        : null,
       d.kind === 'stalled'
-        ? c.note(`No movement for ${fmt.duration(d.stalledFor)}. It may still complete; nothing here says it failed.`, { tone: 'warn' })
+        ? c.note(
+          swap.awaiting_invoice
+            // Worth separating from an ordinary quiet swap: this one is not waiting on anybody, so
+            // "it may still complete" would send an operator off to check the wrong side.
+            ? `No movement for ${fmt.duration(d.stalledFor)}. The invoice was never created, so there is nothing for the other side to pay. The engine retries this when the provider restarts.`
+            : `No movement for ${fmt.duration(d.stalledFor)}. It may still complete; nothing here says it failed.`,
+          { tone: 'warn' })
         : null,
       el('p.small.muted', { text: exposureLine(swap, { role: swap.role }) }),
       stepList(swap),
@@ -232,9 +272,11 @@ function detailModal(swap, snap) {
           ['Timeout', timeoutLine(swap, tip)],
           ['Confirmations required', swap.required_confirmations || null],
           ['Reorg', swap.reorg_seen_at_height ? `seen at height ${swap.reorg_seen_at_height}` : null],
-          // Shown even on a healthy swap, and labelled: it is the *last* error, not necessarily the
-          // reason for anything.
-          ['Last error', swap.last_error ? `${swap.last_error}${['claimed'].includes(swap.state) ? ' (recovered)' : ''}` : null],
+          // Only a live swap can carry one: the engine clears `last_error` on every write that moves
+          // the state, so a record that reached any outcome has none. Labelled rather than presented
+          // as a cause: it is the *last* error, not necessarily the reason for anything.
+          ['Last error', swap.last_error || null],
+          ['Retries', swap.retry_count || null],
           ['Started', swap.created_at_unix ? fmt.absTime(swap.created_at_unix) : null],
           ['Took', swap.created_at_unix && swap.updated_at_unix > swap.created_at_unix
             ? fmt.duration(swap.updated_at_unix - swap.created_at_unix)

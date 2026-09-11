@@ -203,9 +203,15 @@ function identityStep(advance, snap) {
 /**
  * The node check, before committing to anything.
  *
- * With failures the two roles diverge on purpose: a provider that cannot execute quotes harmlessly
- * and rejects every request, so continuing is a real choice. A taker that cannot execute would fund
- * an HTLC it has no way to drive, so it is not.
+ * The gate is the engine's own `capable`, never the number of failing checks. Those stopped being
+ * the same question: a funded swap the daemon cannot drive fails a check without making the daemon
+ * incapable of taking on a new one, and upstream reads `capable` before adding that check for
+ * exactly that reason. Keying on the count instead would block someone from finishing setup over a
+ * swap that has nothing to do with whether this node can swap.
+ *
+ * When it is genuinely incapable the two roles diverge on purpose: a provider that cannot execute
+ * quotes harmlessly and rejects every request, so continuing is a real choice. A taker that cannot
+ * execute would fund an HTLC it has no way to drive, so it is not.
  */
 function nodeStep(advance, snap) {
   const h = snap.health || {};
@@ -226,24 +232,29 @@ function nodeStep(advance, snap) {
     }
   } else {
     const failures = h.failures || 0;
+    // `h.capable === false` rather than a truthiness test: it is undefined while the checks are
+    // still arriving, and undefined must not read as "this node cannot swap".
+    const blocked = h.capable === false;
     fill(body,
       c.checkList(h.checks, { showPassing: true }),
       failures === 0
         ? c.note('Everything the engine needs is reachable.', { tone: 'ok' })
-        : role === 'taker'
-          ? c.note('Fix these first. A swap needs your LND and Electrs to finish, and a half-finished swap locks funds for about a day.', { tone: 'bad', title: 'Not ready to swap' })
-          : c.note('Your provider will advertise rates and reject every swap request until these are fixed. That is harmless, and you can leave it running while you sort them out.', { tone: 'warn', title: 'You can continue' }));
+        : !blocked
+          ? c.note('Everything a new swap needs is reachable. What failed above is a swap that is already funded and cannot be driven right now, which needs attention but does not stop this node swapping.', { tone: 'warn', title: 'You can continue' })
+          : role === 'taker'
+            ? c.note('Fix these first. A swap needs your LND and Electrs to finish, and a half-finished swap locks funds for about a day.', { tone: 'bad', title: 'Not ready to swap' })
+            : c.note('Your provider will advertise rates and reject every swap request until these are fixed. That is harmless, and you can leave it running while you sort them out.', { tone: 'warn', title: 'You can continue' }));
   }
 
-  const failures = h.failures || 0;
-  const canContinue = failures === 0 || role !== 'taker';
+  const blocked = h.capable === false;
+  const canContinue = !blocked || role !== 'taker';
 
   return c.card({ title: 'Your node', actions: [rerun] },
     body,
     el('div.actions', {},
       c.button({ label: 'Back', onClick: () => advance(2) }),
       c.button({
-        label: failures ? 'Continue anyway' : 'Continue',
+        label: blocked ? 'Continue anyway' : 'Continue',
         variant: 'primary',
         disabled: !canContinue,
         onClick: () => advance(4),

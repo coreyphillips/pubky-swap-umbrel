@@ -34,6 +34,13 @@ const REVERSE = [
   { key: 'claimed', who: 'us', label: 'Invoice settled', terminal: true },
 ];
 
+// Substituted for the first reverse step when the record was admitted but the invoice was never
+// created. `who` is us, not them: there is nobody on the other side to wait for.
+const REVERSE_UNINVOICED = {
+  key: 'created', who: 'us', label: 'Admitted, invoice not created',
+  note: 'the engine could not reach Lightning; it retries on restart',
+};
+
 /**
  * How long a state can sit unchanged before it is worth mentioning.
  *
@@ -54,8 +61,21 @@ const TONES = {
   them: { tone: 'var(--warn)', dim: 'var(--warn-dim)' },
 };
 
-export function stepsFor(direction) {
-  return direction === 'submarine' ? SUBMARINE : REVERSE;
+/**
+ * The track for a swap, with one substitution.
+ *
+ * Upstream admits a reverse swap by writing the record *before* it asks Lightning for the hold
+ * invoice, so that a client can retry without spending another quote. The cost is a record that
+ * sits in `created` with no invoice behind it when that call fails, and the stock first step would
+ * describe it as "Invoice issued, waiting for them to pay it": wrong on both halves, since no
+ * invoice exists and nobody is coming to pay it.
+ */
+export function stepsFor(direction, swap) {
+  if (direction === 'submarine') return SUBMARINE;
+  if (swap && swap.awaiting_invoice && swap.state === 'created') {
+    return [REVERSE_UNINVOICED, ...REVERSE.slice(1)];
+  }
+  return REVERSE;
 }
 
 /**
@@ -67,7 +87,7 @@ export function stepsFor(direction) {
  * and says only how long it has been quiet.
  */
 export function describeSwap(swap, { nowUnix = Math.floor(Date.now() / 1000) } = {}) {
-  const steps = stepsFor(swap.direction);
+  const steps = stepsFor(swap.direction, swap);
   const index = steps.findIndex((s) => s.key === swap.state);
   const age = nowUnix - (swap.updated_at_unix || nowUnix);
 
@@ -98,6 +118,24 @@ export function describeSwap(swap, { nowUnix = Math.floor(Date.now() / 1000) } =
   }
 
   const step = steps[index];
+
+  // Upstream stopped making a funded swap terminal when its driver cannot make progress: it retries
+  // forever on a backoff capped at five minutes, and every attempt stamps `updated_at_unix`. That
+  // silently disarmed both of the signals below, which are arithmetic on that timestamp against
+  // thresholds of ten minutes and up, so a swap the engine had given up driving looked like a
+  // healthy one. The daemon says so directly, so read that instead of inferring it from a clock.
+  if (swap.needs_recovery) {
+    return {
+      kind: 'recovery', steps, index, who: step.who, tone: 'bad',
+      headline: step.label,
+      sub: 'The engine cannot make progress on this swap and is retrying.',
+      reason: swap.last_error || null,
+      retryAt: swap.next_retry_at_unix || null,
+      retries: swap.retry_count || 0,
+      stalledFor: null,
+    };
+  }
+
   const limit = STALL_SECS[swap.state];
   const stalled = limit != null && age > limit;
   return {
@@ -111,6 +149,16 @@ export function describeSwap(swap, { nowUnix = Math.floor(Date.now() / 1000) } =
     reason: null,
     stalledFor: stalled ? age : null,
   };
+}
+
+/**
+ * `next_retry_at_unix` is in the future, and relTime only looks backwards: it answers a future
+ * timestamp with "just now", which reads as though the retry already ran and achieved nothing.
+ */
+export function retryPhrase(retryAt, { nowUnix = Math.floor(Date.now() / 1000) } = {}) {
+  if (!retryAt) return null;
+  const wait = retryAt - nowUnix;
+  return wait <= 0 ? 'Retrying now.' : `Retrying in ${fmt.duration(wait)}.`;
 }
 
 function base(kind, steps, index, tone, headline, sub) {
@@ -166,6 +214,7 @@ export function track(swap, { compact = false } = {}) {
 
 function trackLabel(swap, d) {
   if (d.kind === 'settled') return 'Completed';
+  if (d.kind === 'recovery') return `Needs recovery: ${d.reason || 'the engine cannot make progress'}`;
   if (d.kind === 'failed') return `Failed: ${d.reason || 'no reason given'}`;
   if (d.kind === 'unwound') return d.headline;
   if (d.index < 0) return d.headline;
@@ -188,9 +237,16 @@ export function stepList(swap) {
       el('div', {},
         el('div.step-title', { text: step.label }),
         current && step.note ? el('div.step-meta', { text: step.note }) : null,
-        current && d.who ? el('div.step-meta', {
-          text: d.who === 'us' ? 'Your node is working on this.' : 'Waiting on the other side.',
-        }) : null));
+        current && d.kind === 'recovery'
+          ? el('div.step-meta', {
+            text: [
+              d.reason ? `The engine reported: ${d.reason}` : 'The engine cannot make progress here.',
+              retryPhrase(d.retryAt),
+            ].filter(Boolean).join(' '),
+          })
+          : current && d.who ? el('div.step-meta', {
+            text: d.who === 'us' ? 'Your node is working on this.' : 'Waiting on the other side.',
+          }) : null));
     list.appendChild(row);
   });
   return list;

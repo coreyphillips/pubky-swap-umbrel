@@ -11,10 +11,14 @@
 // `expected_onchain_cost_sat` is deliberately "expected" -- and renaming them here would quietly
 // launder that away.
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const settings = require('./settings');
 const secrets = require('./secrets');
 const engine = require('./engine');
 const swapview = require('./swapview');
+const paths = require('./paths');
 
 // Upstream's MIN_AMOUNT_FEE_MULTIPLE. Below this the fee dominates the trade, so the advertised
 // minimum rises with the fee environment instead of staying at a number chosen when fees were low.
@@ -71,7 +75,13 @@ function buildHealth(statusClient, lastDoctor, now) {
   if (live && Array.isArray(live.checks)) {
     const age = entry.fetchedAt ? now - Math.floor(entry.fetchedAt / 1000) : null;
     return {
-      state: live.capable ? (live.warnings ? 'degraded' : 'ok') : 'failed',
+      // `capable` is the engine's own answer to "can this node take on a NEW swap?", and since the
+      // recovery check landed upstream it stopped being the same question as "is every check
+      // passing". A funded swap the daemon cannot drive fails a check without making the daemon
+      // incapable: status.rs reads `capable` before pushing that check precisely so a stuck old
+      // swap does not stop new ones. A failing check therefore has to show through here even when
+      // the node is capable, or this document reads "ok" while carrying failures: 1.
+      state: !live.capable ? 'failed' : (live.failures || live.warnings) ? 'degraded' : 'ok',
       capable: live.capable,
       failures: live.failures,
       warnings: live.warnings,
@@ -143,12 +153,38 @@ function buildLimits(statusClient) {
   };
 }
 
+/**
+ * Did this reverse swap ever get its hold invoice?
+ *
+ * Upstream admits a reverse swap by persisting the record *before* asking Lightning for the
+ * invoice, so a client whose request fails there can retry without spending another quote. The
+ * cost is a record left in `created` with nothing behind it when that call fails, and the status
+ * API carries no field that tells it apart from a swap genuinely waiting to be paid. The raw
+ * record does: `pending_hold_invoice` is still set on the ones that never completed the intent.
+ *
+ * Read off disk only for the handful of entries that could possibly be one, so the three-second
+ * /swaps poll does not grow a directory walk on the common path, and never fatal: an unreadable
+ * record means we do not know, and not knowing renders as the ordinary step.
+ */
+function awaitingInvoice(swapId) {
+  try {
+    const rec = JSON.parse(fs.readFileSync(path.join(paths.providerSwaps, `${swapId}.json`), 'utf8'));
+    return rec && rec.pending_hold_invoice != null;
+  } catch { return false; }
+}
+
 function buildSwaps(statusClient) {
   const swaps = statusClient.value('swaps');
   if (!swaps || typeof swaps !== 'object') {
     return { active: [], recent: [], recent_limit: 0, finished_total: 0, available: false };
   }
-  const tag = (list) => (Array.isArray(list) ? list : []).map((s) => ({ ...s, role: 'provider' }));
+  const tag = (list) => (Array.isArray(list) ? list : []).map((s) => {
+    const view = { ...s, role: 'provider' };
+    if (view.direction === 'reverse' && view.state === 'created' && view.swap_id) {
+      view.awaiting_invoice = awaitingInvoice(view.swap_id);
+    }
+    return view;
+  });
   return {
     active: tag(swaps.active),
     recent: tag(swaps.recent),
@@ -165,4 +201,4 @@ function publicSettings(cfg) {
   return out;
 }
 
-module.exports = { build, MIN_AMOUNT_FEE_MULTIPLE };
+module.exports = { build, buildHealth, MIN_AMOUNT_FEE_MULTIPLE };
