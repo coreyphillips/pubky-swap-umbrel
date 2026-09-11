@@ -2,7 +2,7 @@ manifestVersion: 1
 id: pubky-swap
 category: bitcoin
 name: Pubky Swap
-version: "0.2.1"
+version: "0.2.2"
 tagline: Run a self-hosted Lightning to on-chain swap provider on your own node
 icon: https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/icon.svg
 gallery:
@@ -45,26 +45,29 @@ dependencies:
   # whichever server is installed without declaring anything.
   - lightning
 releaseNotes: >-
-  Fixes on top of the rebuilt panel.
+  A newer swap engine, and the panel changes it turned out to need.
 
 
-  You can stop and restart the provider from the app now. The buttons are on Earn, next to the
-  rates they affect, and in Settings, where someone looking for a stop button expects to find one.
-  Stopping is not silent about what it costs you: a stopped provider is not driving the swaps it
-  has already committed to, so a refund that comes due is not broadcast until you start it again,
-  and if anything is in flight the button says exactly that, with the count, before you confirm.
+  The engine no longer gives up on a swap that already holds your money. It used to try ten times
+  and then mark the swap failed; now it keeps retrying and tells the panel it needs help. That is
+  the better behaviour, but it meant the old panel had no way to notice: it decided a swap was
+  stuck by watching for a swap that had stopped changing, and one that is being retried never stops
+  changing. A funded swap nobody could finish would have looked like a healthy one waiting on the
+  other side. Swaps in that state are now marked wherever they appear, with the engine's own
+  explanation of what went wrong and when it will try again.
 
 
-  The panel fits a phone. At a phone's width the page laid out wider than the screen, so cards ran
-  off the right edge and the Stop button sat half off it.
+  Setting up no longer stops you because of an old swap. One swap that cannot be finished is worth
+  knowing about, but it does not stop your node doing new ones, and the setup check used to treat
+  it as though it did.
 
 
-  The tabs are hidden while you are still setting up. They were visible but not yet reachable, so
-  pressing one bounced you back to setup and looked broken.
+  A swap that was accepted but whose Lightning invoice was never created now says so, instead of
+  telling you an invoice is waiting to be paid.
 
 
-  Your offer reads "they send on-chain or they receive on-chain". It said "and", which parses as
-  one confused sentence about a single swap rather than two things a counterparty can pick from.
+  This release also brings in the engine's newer work: swaps with Taproot wallets, quotes tied to
+  whoever asked for them, and support for identities created on mobile.
 path: ""
 defaultUsername: ""
 defaultPassword: ""
