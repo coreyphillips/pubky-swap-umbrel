@@ -129,11 +129,13 @@ function inFlightCard(snap) {
 
   // Anything that has stopped moving sorts to the top: it is the only thing on this card that might
   // need a person.
-  const sorted = all.sort((a, b) => {
-    const sa = describeSwap(a).kind === 'stalled' ? 0 : 1;
-    const sb = describeSwap(b).kind === 'stalled' ? 0 : 1;
-    return sa - sb || b.updated_at_unix - a.updated_at_unix;
-  });
+  // A swap the engine has told us it cannot drive outranks one we merely timed, because that is the
+  // daemon's own verdict rather than our arithmetic.
+  const rank = (swap) => {
+    const kind = describeSwap(swap).kind;
+    return kind === 'recovery' ? 0 : kind === 'stalled' ? 1 : 2;
+  };
+  const sorted = all.sort((a, b) => rank(a) - rank(b) || b.updated_at_unix - a.updated_at_unix);
 
   return c.card({ title: 'In flight', meta: `${all.length} swap${all.length === 1 ? '' : 's'}` },
     el('div.stack', { style: { gap: 'var(--s-3)' } },
@@ -145,9 +147,11 @@ function inFlightCard(snap) {
           track(swap, { compact: true }),
           el('span.small.muted', { text: d.headline }),
           el('span.spacer'),
-          d.kind === 'stalled'
-            ? c.badge(`no movement for ${fmt.duration(d.stalledFor)}`, 'warn')
-            : el('span.small.faint', { text: fmt.relTime(swap.updated_at_unix) }));
+          d.kind === 'recovery'
+            ? c.badge('needs recovery', 'bad')
+            : d.kind === 'stalled'
+              ? c.badge(`no movement for ${fmt.duration(d.stalledFor)}`, 'warn')
+              : el('span.small.faint', { text: fmt.relTime(swap.updated_at_unix) }));
       })));
 }
 
