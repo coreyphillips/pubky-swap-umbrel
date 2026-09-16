@@ -37,6 +37,16 @@ const PER_PROVIDER_COOLDOWN_MS = 10000;
 
 const QUOTE_LINE = /^QUOTE\s+(.*)$/m;
 
+// The line the client prints as soon as it has decrypted the identity and signed it in to its
+// homeserver, and the only place either of those is reported. See probeIdentity.
+const CLIENT_PUBKY_LINE = /Client pubky:\s*(\S+)/;
+
+// Deliberately not a pubky. The identity check has to name a provider and an amount before the
+// client will run at all, and a string that cannot parse as a public key is how it names nobody:
+// every send is refused where the key is parsed, so nothing can leave for a stranger even if the
+// check outlives the line it is waiting for. See probeIdentity.
+const NO_PROVIDER = 'identity-check-only';
+
 class Taker {
   constructor({ logs, notices }) {
     this.logs = logs;
@@ -99,12 +109,13 @@ class Taker {
   /**
    * Ask a provider for a price. Moves no funds.
    *
-   * Runs in a throwaway data directory, which is not tidiness. The client resumes any unfinished
-   * swap it finds *before* it handles `--quote-only`, so a quote check on a node with an open swap
-   * would drive that swap -- for hours, if it is waiting on confirmations -- and the old 40-second
-   * SIGKILL would land in the middle of it, potentially while a refund was being broadcast. An
-   * empty directory has nothing to resume, so the quote returns in seconds and the real swap path
-   * keeps the resume behaviour, where it belongs.
+   * Runs in a throwaway data directory, which is not tidiness. The client used to resume any
+   * unfinished swap it found *before* it handled `--quote-only`, so a quote check on a node with an
+   * open swap would drive that swap -- for hours, if it is waiting on confirmations -- and the old
+   * 40-second SIGKILL would land in the middle of it, potentially while a refund was being
+   * broadcast. Upstream now skips the resume in this mode for the same reason, but a directory with
+   * nothing to resume is what makes that a second line of defence rather than the only one, and the
+   * real swap path keeps the resume behaviour, where it belongs.
    */
   async quote({ provider, direction, amount }) {
     if (this.quotesInFlight >= MAX_CONCURRENT_QUOTES) {
@@ -321,13 +332,21 @@ class Taker {
   /**
    * Check that the loaded identity actually works, without going near a swap.
    *
-   * `--resume-only` against an empty directory derives the key, signs in to the homeserver, prints
-   * the pubky and exits in a few seconds. It needs no provider and no amount, and it has nothing to
-   * resume, so it moves nothing.
-   *
    * The pubky it returns is the point. A wrong passphrase does not fail -- it silently derives a
    * different, perfectly valid identity -- so showing the operator which pubky they just loaded and
    * asking them to recognise it is the only place that mistake is catchable.
+   *
+   * This used to be `--resume-only`, which needed no provider and no amount and printed the pubky
+   * on its way past. The engine now loads the identity *after* that mode has returned, on purpose:
+   * claiming or refunding a persisted swap needs the branch key on disk and nothing else, so an
+   * operator who has lost their phrase can still get their money out. That leaves `--quote-only`
+   * as the only mode that still loads it, and a quote needs a counterparty.
+   *
+   * So it names one that cannot exist, and stops the run the moment the identity line appears --
+   * which the engine prints before it asks anything of the provider, so nothing is sent, nothing
+   * is written to the operator's homeserver, and the log shows a check that ended rather than a
+   * swap that failed. `--no-rendezvous-iroh` keeps it from dialling a doorbell for the same
+   * reason. Neither guard is load-bearing on its own, and both are cheap.
    */
   async probeIdentity() {
     if (!secrets.isConfigured()) throw httpError(400, 'NOT_CONFIGURED', 'Load a recovery phrase or file first.');
@@ -336,10 +355,13 @@ class Taker {
     try {
       const configFile = engine.writeConfig(
         path.join(dir, 'config.toml'),
-        engine.clientConfig(settings.load(), { dataDir: dir }),
+        // The amount is required and never used: the run ends before anything is quoted.
+        engine.clientConfig(settings.load(), { dataDir: dir, provider: NO_PROVIDER, amount: 1 }),
       );
-      const { stdout, code } = await runClient(['--resume-only'], configFile, QUOTE_TERM_MS, this.logs);
-      const m = /Client pubky:\s*(\S+)/.exec(stdout);
+      const { stdout, code } = await runClient(
+        ['--quote-only', '--no-rendezvous-iroh'], configFile, QUOTE_TERM_MS, this.logs, CLIENT_PUBKY_LINE,
+      );
+      const m = CLIENT_PUBKY_LINE.exec(stdout);
       if (m) return { pubky: m[1] };
       throw httpError(400, 'IDENTITY_FAILED', identityFailureMessage(stdout, code), refusalFrom(stdout));
     } finally {
@@ -419,8 +441,13 @@ function sweepQuoteDirs(taker) {
  * worth reading -- a provider that never answered, a refusal naming exactly what was wrong with
  * the price -- and those lines used to be captured for the return value and then dropped, so the
  * panel's log showed nothing at all for a check that had just failed in front of you.
+ *
+ * `stopWhen` ends the run as soon as the output matches it, for a caller that wants one line out
+ * of the engine rather than an outcome. Everything printed up to that point is still returned, and
+ * the exit that follows carries a signal rather than a code, so a caller that uses this reads the
+ * line and not the code.
  */
-function runClient(args, configFile, termMs, logs) {
+function runClient(args, configFile, termMs, logs, stopWhen = null) {
   return new Promise((resolve, reject) => {
     let child;
     try { child = spawn(BIN, args, { env: engine.childEnv(configFile), stdio: ['ignore', 'pipe', 'pipe'] }); }
@@ -430,6 +457,13 @@ function runClient(args, configFile, termMs, logs) {
       stdout += d.toString();
       if (stdout.length > 200000) stdout = stdout.slice(-200000);
       if (logs) logs.push(d, stream);
+      if (stopWhen && stopWhen.test(stdout)) {
+        stopWhen = null;
+        // Short grace: there is nothing to unwind. The client installs no signal handler, so this
+        // is a formality, and the escalation is there so a caller waiting on the line it already
+        // has can never wait on a process that will not go.
+        killProc(child, 2000, 3000);
+      }
     };
     child.stdout.on('data', capture('out'));
     child.stderr.on('data', capture('err'));

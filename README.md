@@ -146,9 +146,11 @@ docker build -f docker/Dockerfile -t pubky-swap-app:dev .
 ```
 
 The image compiles `swap-provider` and `swap-client` from
-[pubky-swap](https://github.com/coreyphillips/pubky-swap) with `--features full,beignet`, so an
+[pubky-swap](https://github.com/coreyphillips/pubky-swap) with `--features full,beignet,iroh`, so an
 operator can point the provider at a [beignet](https://github.com/coreyphillips/beignet) daemon
-instead of LND without a different image. `PUBKY_SWAP_REF` selects the upstream commit.
+instead of LND without a different image. `iroh` is the doorbell someone handed only your pubky
+rings, and what lets a provider serve clients holding a scoped Pubky session rather than an
+account key, which is how the mobile apps sign in. `PUBKY_SWAP_REF` selects the upstream commit.
 
 ## Running the tests
 
