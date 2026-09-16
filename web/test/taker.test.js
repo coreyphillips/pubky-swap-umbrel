@@ -17,12 +17,28 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pubky-swap-taker-test-'))
 process.env.DATA_DIR = dataDir;
 process.env.NETWORK = 'regtest';
 
+// Stands in for swap-client, and behaves like one whose provider never answers: it says who the
+// identity is and then waits. Everything the identity check is asked to get right is visible in
+// what it prints before that, so it prints its arguments and the configuration it was given.
+const STUB = path.join(dataDir, 'swap-client-stub.sh');
+fs.writeFileSync(STUB, [
+  '#!/bin/sh',
+  'echo "argv: $*"',
+  'cat "$PUBKY_SWAP_CONFIG"',
+  'echo "Client pubky: pk-from-the-stub"',
+  'sleep 5',
+  'echo "the run carried on"',
+  '',
+].join('\n'), { mode: 0o755 });
+process.env.SWAP_CLIENT_BIN = STUB;
+
 const paths = require('../lib/paths');
+const secrets = require('../lib/secrets');
 const { LogBuffer } = require('../lib/logbuf');
 const { Taker, parseQuoteLine } = require('../lib/taker');
 
-function taker() {
-  return new Taker({ logs: new LogBuffer(), notices: { raise() {} } });
+function taker(logs = new LogBuffer()) {
+  return new Taker({ logs, notices: { raise() {} } });
 }
 
 function writeRecord(id, state, extra = {}) {
@@ -112,6 +128,36 @@ test('the QUOTE line is parsed, and its Debug-cased direction folded', () => {
   assert.equal(q.total_sat, 253405);
   assert.equal(q.service_fee_sat, null, 'fields upstream does not print are absent, not zero');
   assert.equal(parseQuoteLine('no quote here'), null);
+});
+
+/**
+ * The identity check, after upstream moved the identity load out of `--resume-only`.
+ *
+ * Three things have to hold, and the stub can show all three. The check has to run the mode that
+ * still loads the identity; it has to name a provider nothing can be sent to, because a quote
+ * needs a counterparty and this one must not be a real person; and it has to stop at the line it
+ * came for, so a check never turns into a run that outlives it.
+ */
+test('the identity check reads the pubky and ends the run there', async () => {
+  clearRecords();
+  // Only so an identity counts as configured; the stub never looks at it.
+  secrets.writePhrase('a phrase belonging to nobody, written by a test');
+  try {
+    const logs = new LogBuffer();
+    const started = Date.now();
+    const { pubky } = await taker(logs).probeIdentity();
+    const elapsed = Date.now() - started;
+    const printed = logs.tailText(200);
+
+    assert.equal(pubky, 'pk-from-the-stub');
+    assert.match(printed, /--quote-only/, 'the only mode that still loads the identity');
+    assert.match(printed, /--no-rendezvous-iroh/, "a check rings nobody's doorbell");
+    assert.match(printed, /provider_pkarr = "identity-check-only"/, 'and names nobody as the provider');
+    assert.ok(!/the run carried on/.test(printed), 'the run must not outlive the line it was started for');
+    assert.ok(elapsed < 4000, `the check waited ${elapsed}ms for a line it already had`);
+  } finally {
+    secrets.clearAll();
+  }
 });
 
 test.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));

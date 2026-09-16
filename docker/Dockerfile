@@ -42,8 +42,15 @@ RUN cargo build --release -p swap-provider -p swap-client --features full,beigne
 # The dashboard is built entirely on the provider's read-only status API, and reads nothing out of
 # the daemon's logs. If that feature ever falls out of the build, the panel would come up with
 # nothing to show and no error to explain it, so fail the build here instead.
+#
+# The client's three are the modes the panel drives it in: recovery, the quote check, and the
+# identity check, which is `--quote-only` with the doorbell off. A flag that disappears is an
+# upstream change the panel has to be taught about, and this is a cheaper place to find out than
+# somebody's node.
 RUN /usr/local/bin/swap-provider --help | grep -q -- '--status-addr' \
-    && /usr/local/bin/swap-client --help | grep -q -- '--resume-only'
+    && /usr/local/bin/swap-client --help | grep -q -- '--resume-only' \
+    && /usr/local/bin/swap-client --help | grep -q -- '--quote-only' \
+    && /usr/local/bin/swap-client --help | grep -q -- '--no-rendezvous-iroh'
 
 # ---- Stage 2: the runtime ----
 FROM node:20-bookworm-slim
