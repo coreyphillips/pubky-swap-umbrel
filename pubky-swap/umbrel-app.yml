@@ -2,7 +2,7 @@ manifestVersion: 1
 id: pubky-swap
 category: bitcoin
 name: Pubky Swap
-version: "0.2.2"
+version: "0.2.3"
 tagline: Run a self-hosted Lightning to on-chain swap provider on your own node
 icon: https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/icon.svg
 gallery:
@@ -45,29 +45,33 @@ dependencies:
   # whichever server is installed without declaring anything.
   - lightning
 releaseNotes: >-
-  A newer swap engine, and the panel changes it turned out to need.
+  A newer swap engine, and the one panel change it asked for.
 
 
-  The engine no longer gives up on a swap that already holds your money. It used to try ten times
-  and then mark the swap failed; now it keeps retrying and tells the panel it needs help. That is
-  the better behaviour, but it meant the old panel had no way to notice: it decided a swap was
-  stuck by watching for a swap that had stopped changing, and one that is being retried never stops
-  changing. A funded swap nobody could finish would have looked like a healthy one waiting on the
-  other side. Swaps in that state are now marked wherever they appear, with the engine's own
-  explanation of what went wrong and when it will try again.
+  Swaps that used to be given up on now keep going. A submarine swap whose payment call broke after
+  your node had already accepted the payment was marked failed with the money still committed; it
+  now asks your node what actually happened and carries on. So does one resumed near its claim
+  deadline. A reverse swap being recovered starts one driver however many times the request is
+  replayed, and no swap can hold two reservations at once, which used to leave part of your
+  exposure committed for as long as the daemon ran.
 
 
-  Setting up no longer stops you because of an old swap. One swap that cannot be finished is worth
-  knowing about, but it does not stop your node doing new ones, and the setup check used to treat
-  it as though it did.
+  A request your provider could not handle is no longer thrown away. It used to be consumed on the
+  first error, so the person who sent it waited for a reply that was never coming. A quote request
+  naming an offer that has just been replaced now gets a refusal instead of silence, and a busy
+  moment no longer turns new clients away while the quote cache is full.
 
 
-  A swap that was accepted but whose Lightning invoice was never created now says so, instead of
-  telling you an invoice is waiting to be paid.
+  Paying a hold invoice no longer holds up everything else your provider is doing with your node.
 
 
-  This release also brings in the engine's newer work: swaps with Taproot wallets, quotes tied to
-  whoever asked for them, and support for identities created on mobile.
+  People whose Pubky identity lives in a mobile app can swap with you now. Providers offer the
+  scoped-session protocol alongside the doorbell, which this app has always answered.
+
+
+  Setting up reads your pubky from a different part of the engine. It moved because recovering a
+  funded swap must not depend on the Pubky identity that started it, only on the records this app
+  keeps, and those records are the only thing that can finish it.
 path: ""
 defaultUsername: ""
 defaultPassword: ""
