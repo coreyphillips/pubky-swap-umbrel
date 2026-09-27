@@ -9,6 +9,7 @@ import { el, fill } from '../dom.js';
 import * as fmt from '../format.js';
 import * as c from '../components.js';
 import { track, describeSwap, retryPhrase } from '../swapview.js';
+import { connectionDetails, connectionQr } from '../connect.js';
 
 export default {
   id: 'overview',
@@ -18,6 +19,7 @@ export default {
     fill(root,
       el('div.stack', {},
         el('div', { attrs: { id: 'ovHealth' } }),
+        el('div', { attrs: { id: 'ovConnect' } }),
         el('div.grid.c2', {},
           el('div', { attrs: { id: 'ovExposure' } }),
           el('div', { attrs: { id: 'ovEarnings' } })),
@@ -27,12 +29,37 @@ export default {
 
   render(root, snap) {
     fill(root.querySelector('#ovHealth'), healthCard(snap));
+    fill(root.querySelector('#ovConnect'), connectCard(snap));
     fill(root.querySelector('#ovExposure'), exposureCard(snap));
     fill(root.querySelector('#ovEarnings'), earningsCard(snap));
     fill(root.querySelector('#ovFlight'), inFlightCard(snap));
     fill(root.querySelector('#ovOffer'), offerCard(snap));
   },
 };
+
+function connectCard(snap) {
+  const connection = connectionDetails(snap);
+  if (!connection.uri) {
+    return c.card({ title: 'Connect' },
+      c.note(connection.reason, { tone: 'idle' }),
+      el('a.small', { attrs: { href: '#/settings' }, text: 'Open Settings' }));
+  }
+  const networkLabel = connection.network === 'bitcoin' ? 'Bitcoin mainnet' : connection.network;
+  return c.card({ title: 'Connect', meta: networkLabel },
+    el('div.connect-layout', {},
+      el('div.connect-code', {}, connectionQr(connection.uri)),
+      el('div.connect-content', {},
+        el('h4.connect-title', { text: 'Your node, connected to Bitkit' }),
+        el('p.muted', { text: 'Open the scanner in Bitkit and scan this code. Bitkit saves your provider and turns on Pubky Swap automatically.' }),
+        connection.available ? null : c.note('Your provider is connected but is not accepting new swaps yet. Check System above.', { tone: 'warn' }),
+        el('div.connect-identity', {},
+          el('div.small.muted', { text: 'Provider pubky' }),
+          c.copyText(connection.pubky, { label: 'Copy provider pubky' })),
+        el('div.actions.connect-actions', {},
+          el('a.btn', { text: 'Open in Bitkit', attrs: { href: connection.uri }, dataset: { variant: 'primary' } }),
+          c.copyButton(connection.uri, 'Copy connection link')),
+        el('p.small.faint', { text: 'On the same phone? Tap Open in Bitkit. This code shares only your public provider identity and Bitcoin network.' }))));
+}
 
 function healthCard(snap) {
   const h = snap.health || {};
