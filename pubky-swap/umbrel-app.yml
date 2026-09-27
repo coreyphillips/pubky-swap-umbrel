@@ -2,7 +2,7 @@ manifestVersion: 1
 id: pubky-swap
 category: bitcoin
 name: Pubky Swap
-version: "0.2.3"
+version: "0.2.4"
 tagline: Run a self-hosted Lightning to on-chain swap provider on your own node
 icon: https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/icon.svg
 gallery:
@@ -45,33 +45,20 @@ dependencies:
   # whichever server is installed without declaring anything.
   - lightning
 releaseNotes: >-
-  A newer swap engine, and the one panel change it asked for.
+  Connect Bitkit to your provider from the Overview with one scan. The new Connect card shows a
+  QR code, a copyable connection link, and an Open in Bitkit action for use on the same phone.
 
 
-  Swaps that used to be given up on now keep going. A submarine swap whose payment call broke after
-  your node had already accepted the payment was marked failed with the money still committed; it
-  now asks your node what actually happened and carries on. So does one resumed near its claim
-  deadline. A reverse swap being recovered starts one driver however many times the request is
-  replayed, and no swap can hold two reservations at once, which used to leave part of your
-  exposure committed for as long as the daemon ran.
+  The code includes only your public provider identity and Bitcoin network. It is generated on
+  your node and appears once the running provider reports a matching identity and network.
 
 
-  A request your provider could not handle is no longer thrown away. It used to be consumed on the
-  first error, so the person who sent it waited for a reply that was never coming. A quote request
-  naming an offer that has just been replaced now gets a refusal instead of silence, and a busy
-  moment no longer turns new clients away while the quote cache is full.
+  Use a Bitkit build with Pubky Swap connection-link support. Scanning saves your provider,
+  enables Pubky Swap, and opens the Pubky Ring identity picker when an identity is needed.
 
 
-  Paying a hold invoice no longer holds up everything else your provider is doing with your node.
-
-
-  People whose Pubky identity lives in a mobile app can swap with you now. Providers offer the
-  scoped-session protocol alongside the doorbell, which this app has always answered.
-
-
-  Setting up reads your pubky from a different part of the engine. It moved because recovering a
-  funded swap must not depend on the Pubky identity that started it, only on the records this app
-  keeps, and those records are the only thing that can finish it.
+  The dashboard's diagnostic version now matches this release. Existing settings, identity,
+  funding-wallet data, and swap recovery records stay in the app's persistent data volume.
 path: ""
 defaultUsername: ""
 defaultPassword: ""
