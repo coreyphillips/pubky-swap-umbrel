@@ -37,6 +37,7 @@ class El {
 
   get className() { return this.classList.value; }
   set className(v) { this.classList.set = new Set(String(v).split(/\s+/).filter(Boolean)); }
+  get firstChild() { return this.childNodes[0] || null; }
 
   appendChild(node) {
     if (node instanceof Frag) {

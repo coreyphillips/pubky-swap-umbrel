@@ -310,6 +310,20 @@ a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; 
 }
 
 /* ---------- Buttons ---------- */
+.connect-layout { display: flex; align-items: center; gap: var(--s-8); }
+.connect-code { flex: 0 0 auto; max-width: 100%; line-height: 0; }
+.connect-qr { display: block; width: 245px; max-width: 100%; height: auto; border-radius: var(--r-sm); }
+.connect-content { min-width: 0; flex: 1; }
+.connect-title { font-size: var(--t-lg); margin-bottom: var(--s-2); }
+.connect-identity { margin: var(--s-5) 0; }
+.connect-identity .copyval { font-size: var(--t-xs); }
+.connect-actions { margin-bottom: var(--s-3); }
+.connect-actions a { text-decoration: none; }
+@media (max-width: 719px) {
+  .connect-layout { flex-direction: column; align-items: stretch; gap: var(--s-5); }
+  .connect-code { align-self: center; }
+}
+
 .btn {
   font: 550 var(--t-sm)/1 var(--font); cursor: pointer;
   padding: 9px 15px; min-height: 36px; border-radius: var(--r-sm);

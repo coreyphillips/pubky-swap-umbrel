@@ -71,6 +71,19 @@ Setting it up:
 
 Your fee is `base_fee + amount x fee_ppm / 1_000_000`, and the miner fee is quoted on top at cost.
 
+### Connect Bitkit with one scan
+
+Once the provider is running, **Overview > Connect** shows a QR code. Open Bitkit's scanner and
+scan it to save this provider and enable Pubky Swap. If you are viewing the dashboard on the same
+phone, tap **Open in Bitkit**, or use **Copy connection link** to share the connection.
+
+The code contains only the public provider pubky and its Bitcoin network:
+`pubkyswap://connect?pubky=<52-character-pubky>&network=bitcoin`. Supported network values are
+`bitcoin`, `testnet`, `signet`, and `regtest`; Umbrel's `mainnet` is encoded as `bitcoin`. Bitkit
+must use the same network. The code is generated locally with a bundled QR encoder and contains
+no recovery phrase, macaroon, API token, or Umbrel address. The card waits for the daemon's live
+identity and network before offering a connection.
+
 ### The advertised minimum is not always the one you set
 
 The engine never advertises a swap smaller than ten times its own on-chain cost, because below
