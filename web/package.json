@@ -1,6 +1,6 @@
 {
   "name": "pubky-swap-umbrel",
-  "version": "0.2.0",
+  "version": "0.2.4",
   "private": true,
   "description": "Web control panel for a pubky-swap provider and taker on Umbrel",
   "main": "server.js",
