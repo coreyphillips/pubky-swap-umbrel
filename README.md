@@ -23,6 +23,16 @@ https://github.com/coreyphillips/pubky-swap-umbrel
 
 Then install **Pubky Swap** from the Pubky store that appears.
 
+## Update an existing installation
+
+After the community store has synchronized, use **Update** on the existing Pubky Swap app.
+Finish active swaps first and keep a current backup of the app data. The update retains the
+`/data` volume containing settings, identity, funding-wallet state, and swap recovery records.
+Do not uninstall or reset the app to update it.
+
+Reopen or reload the dashboard after the update, confirm the expected provider pubky and network,
+and use **Overview > Connect**. The diagnostic report shows the installed dashboard version.
+
 ## Electrs, Fulcrum or ElectrumX
 
 Any of the three, and none of them is required to install. Pick yours in the app: there is a
@@ -73,6 +83,8 @@ Your fee is `base_fee + amount x fee_ppm / 1_000_000`, and the miner fee is quot
 
 ### Connect Bitkit with one scan
 
+Use a Bitkit build that supports Pubky Swap connection links, such as the matching demo APK.
+
 Once the provider is running, **Overview > Connect** shows a QR code. Open Bitkit's scanner and
 scan it to save this provider and enable Pubky Swap. If you are viewing the dashboard on the same
 phone, tap **Open in Bitkit**, or use **Copy connection link** to share the connection.
@@ -83,6 +95,13 @@ The code contains only the public provider pubky and its Bitcoin network:
 must use the same network. The code is generated locally with a bundled QR encoder and contains
 no recovery phrase, macaroon, API token, or Umbrel address. The card waits for the daemon's live
 identity and network before offering a connection.
+
+### Channel purchasing
+
+Channel purchases and incoming-payment channel creation are planned separately in
+[tracking issue #84](https://github.com/coreyphillips/pubky-swap/issues/84). It covers the provider,
+Umbrel, and Bitkit work, including funding and refund recovery, mainnet and regtest testing, and
+the remaining requirements for replacing Blocktank. This release adds connection setup only.
 
 ### The advertised minimum is not always the one you set
 
