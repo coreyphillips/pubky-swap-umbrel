@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pubky-swap-engine-test-'));
 process.env.DATA_DIR = dataDir;
@@ -55,6 +56,40 @@ test('the taker and the provider are given different data directories', () => {
   assert.equal(client.data_dir, paths.clientDir);
   assert.notEqual(provider.data_dir, client.data_dir,
     'a taker writing into the provider store makes its swaps the provider\'s earnings');
+  assert.equal(client.negotiation, 'auto');
+});
+
+test('an unknown network cannot silently configure mainnet', () => {
+  const result = spawnSync(process.execPath, ['-e', 'require("./lib/engine")'], {
+    cwd: path.join(__dirname, '..'), env: { ...process.env, NETWORK: 'unknown' }, encoding: 'utf8',
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unsupported Bitcoin network/);
+});
+
+test('network changes select independent provider and client stores', () => {
+  const result = spawnSync(process.execPath, ['-e', 'console.log(JSON.stringify(require("./lib/paths")))'], {
+    cwd: path.join(__dirname, '..'), env: { ...process.env, NETWORK: 'regtest' }, encoding: 'utf8',
+  });
+  assert.equal(result.status, 0);
+  const regtest = JSON.parse(result.stdout);
+  assert.notEqual(regtest.providerDir, paths.providerDir);
+  assert.notEqual(regtest.clientDir, paths.clientDir);
+  assert.match(regtest.clientDir, /networks\/regtest\/client$/);
+  assert.match(paths.clientDir, /networks\/bitcoin\/client$/);
+});
+
+test('old flat recovery state is preserved and cannot be silently abandoned', () => {
+  const directory = path.join(dataDir, 'client', 'swaps');
+  fs.mkdirSync(directory, { recursive: true });
+  const record = path.join(directory, 'pending.json');
+  fs.writeFileSync(record, '{"state":"created"}');
+  const result = spawnSync(process.execPath, ['-e', 'require("./lib/paths")'], {
+    cwd: path.join(__dirname, '..'), env: process.env, encoding: 'utf8',
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /explicit network migration/);
+  assert.equal(fs.readFileSync(record, 'utf8'), '{"state":"created"}');
 });
 
 test.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));

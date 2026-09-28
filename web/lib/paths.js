@@ -11,8 +11,25 @@
 // guard against that ever being ambiguous again.
 
 const path = require('path');
+const fs = require('fs');
+const { SWAP_NETWORK } = require('./network');
 
 const DATA_DIR = process.env.DATA_DIR || '/data';
+const CHAIN_DIR = path.join(DATA_DIR, 'networks', SWAP_NETWORK);
+
+for (const directory of ['swap', 'client', 'quote']) {
+  if (containsLegacyState(path.join(DATA_DIR, directory))) {
+    throw new Error('Existing flat swap data needs an explicit network migration before startup. Keep the original data volume.');
+  }
+}
+
+function containsLegacyState(directory) {
+  if (!fs.existsSync(directory)) return false;
+  return fs.readdirSync(directory, { withFileTypes: true }).some((entry) => {
+    if (entry.isDirectory()) return containsLegacyState(path.join(directory, entry.name));
+    return !['config.toml', 'status.token'].includes(entry.name);
+  });
+}
 
 const paths = {
   dataDir: DATA_DIR,
@@ -32,21 +49,19 @@ const paths = {
   recoveryFile: path.join(DATA_DIR, 'secrets', 'identity.pkarr'),
 
   // Provider daemon.
-  providerDir: path.join(DATA_DIR, 'swap'),
-  providerConfig: path.join(DATA_DIR, 'swap', 'config.toml'),
-  providerSwaps: path.join(DATA_DIR, 'swap', 'swaps'),
-  statusToken: path.join(DATA_DIR, 'swap', 'status.token'),
+  providerDir: path.join(CHAIN_DIR, 'swap'),
+  providerConfig: path.join(CHAIN_DIR, 'swap', 'config.toml'),
+  providerSwaps: path.join(CHAIN_DIR, 'swap', 'swaps'),
+  statusToken: path.join(CHAIN_DIR, 'swap', 'status.token'),
 
   // Taker. `swaps/` holds the only key that can recover funds from an unfinished swap.
-  clientDir: path.join(DATA_DIR, 'client'),
-  clientConfig: path.join(DATA_DIR, 'client', 'config.toml'),
-  clientSwaps: path.join(DATA_DIR, 'client', 'swaps'),
-  clientRuns: path.join(DATA_DIR, 'client', 'runs.jsonl'),
+  clientDir: path.join(CHAIN_DIR, 'client'),
+  clientConfig: path.join(CHAIN_DIR, 'client', 'config.toml'),
+  clientSwaps: path.join(CHAIN_DIR, 'client', 'swaps'),
+  clientRuns: path.join(CHAIN_DIR, 'client', 'runs.jsonl'),
 
-  // One throwaway directory per quote check, so the client's resume pass has nothing to resume.
-  // On the volume rather than /tmp: `--quote-only` returns before any record is written, but if
-  // that ever changes, a record in /tmp is a destroyed refund key.
-  quoteDir: path.join(DATA_DIR, 'quote'),
+  // Temporary quote and identity configurations. Recovery data is never swept on exit.
+  quoteDir: path.join(CHAIN_DIR, 'quote'),
 
   // Where a pre-fix build left taker records: relative to the server's cwd, inside the image.
   strandedClientSwaps: path.resolve(process.cwd(), 'pubky-swap-client-data', 'swaps'),

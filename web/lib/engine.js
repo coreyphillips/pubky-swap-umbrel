@@ -18,22 +18,13 @@ const paths = require('./paths');
 const secrets = require('./secrets');
 const toml = require('./toml');
 const { writeAtomic } = require('./atomic');
+const { NETWORK, SWAP_NETWORK, LND_NETWORK_DIR } = require('./network');
 
-const NETWORK = process.env.NETWORK || 'mainnet';
 const LND_IP = process.env.LND_IP || '';
 const LND_GRPC_PORT = process.env.LND_GRPC_PORT || '10009';
 const LND_DIR = process.env.LND_DIR || '/lnd';
 const ELECTRS_IP = process.env.ELECTRS_IP || '';
 const ELECTRS_PORT = process.env.ELECTRS_PORT || '';
-
-// Umbrel exports the chain as `mainnet`; the swap daemon calls the same chain `bitcoin`. Getting
-// this wrong is not a cosmetic mismatch: it decides which chain addresses are derived on.
-const SWAP_NETWORK =
-  { mainnet: 'bitcoin', bitcoin: 'bitcoin', testnet: 'testnet', signet: 'signet', regtest: 'regtest' }[NETWORK] || 'bitcoin';
-
-// LND keeps its chain data under data/chain/bitcoin/<mainnet|testnet|signet|regtest>/.
-const LND_NETWORK_DIR =
-  { bitcoin: 'mainnet', mainnet: 'mainnet', testnet: 'testnet', signet: 'signet', regtest: 'regtest' }[NETWORK] || 'mainnet';
 
 /**
  * One-click Electrum servers.
@@ -144,6 +135,7 @@ function clientConfig(cfg, { dataDir, provider, direction, amount }) {
     provider_pkarr: provider || undefined,
     direction: direction || undefined,
     amount_sat: amount || undefined,
+    negotiation: 'auto',
     onchain_fee_rate_sat_vb: cfg.onchainFeeRate,
     max_routing_fee_msat: cfg.maxRoutingFeeMsat,
     // The operator's own guards, not the provider's.

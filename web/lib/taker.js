@@ -22,13 +22,15 @@ const secrets = require('./secrets');
 const engine = require('./engine');
 const swapview = require('./swapview');
 const { killProc } = require('./proc');
+const { canonicalProvider } = require('./pubky');
 
 const BIN = process.env.SWAP_CLIENT_BIN || '/usr/local/bin/swap-client';
+const IDENTITY_BIN = process.env.SWAP_IDENTITY_BIN || '/usr/local/bin/swap-identity';
 
-// The client's negotiation window is a hard 30s, three times over, plus identity load and a
-// rendezvous dial. The old 40s straight-to-SIGKILL was both too short and too blunt.
-const QUOTE_TERM_MS = 45000;
+// Allow the engine's total 60-second negotiation deadline plus initialization and cleanup.
+const QUOTE_TERM_MS = 75000;
 const QUOTE_KILL_MS = 15000;
+const IDENTITY_TERM_MS = 15000;
 
 // Each spawn is a whole tokio runtime, a pkarr resolution and an iroh dial. Unbounded quote checks
 // are a trivial way to flatten a Raspberry Pi.
@@ -37,15 +39,7 @@ const PER_PROVIDER_COOLDOWN_MS = 10000;
 
 const QUOTE_LINE = /^QUOTE\s+(.*)$/m;
 
-// The line the client prints as soon as it has decrypted the identity and signed it in to its
-// homeserver, and the only place either of those is reported. See probeIdentity.
-const CLIENT_PUBKY_LINE = /Client pubky:\s*(\S+)/;
-
-// Deliberately not a pubky. The identity check has to name a provider and an amount before the
-// client will run at all, and a string that cannot parse as a public key is how it names nobody:
-// every send is refused where the key is parsed, so nothing can leave for a stranger even if the
-// check outlives the line it is waiting for. See probeIdentity.
-const NO_PROVIDER = 'identity-check-only';
+const IDENTITY_LINE = /^IDENTITY pubky=([ybndrfg8ejkmcpqxot1uwisza345h769]{52})$/m;
 
 class Taker {
   constructor({ logs, notices }) {
@@ -55,6 +49,7 @@ class Taker {
     this.run = null;
     this.state = 'idle';
     this.quotesInFlight = 0;
+    this.quoteProviders = new Set();
     this.lastQuoteAt = new Map();
     this.runs = [];
     this.loadRuns();
@@ -109,17 +104,20 @@ class Taker {
   /**
    * Ask a provider for a price. Moves no funds.
    *
-   * Runs in a throwaway data directory, which is not tidiness. The client used to resume any
-   * unfinished swap it found *before* it handled `--quote-only`, so a quote check on a node with an
-   * open swap would drive that swap -- for hours, if it is waiting on confirmations -- and the old
-   * 40-second SIGKILL would land in the middle of it, potentially while a refund was being
-   * broadcast. Upstream now skips the resume in this mode for the same reason, but a directory with
-   * nothing to resume is what makes that a second line of defence rather than the only one, and the
-   * real swap path keeps the resume behaviour, where it belongs.
+   * The pinned engine skips all chain recovery in --quote-only mode. Sharing its client store
+   * lets it recognize already persisted acceptances and reuse the same identity/provider journals.
+   * Quote processes never overlap a swap or recovery process that owns those journals.
    */
   async quote({ provider, direction, amount }) {
+    provider = canonicalProvider(provider);
+    if (this.state !== 'idle') {
+      throw httpError(409, 'BUSY', 'Wait for the current swap or recovery to finish before checking a quote.');
+    }
     if (this.quotesInFlight >= MAX_CONCURRENT_QUOTES) {
       throw httpError(429, 'RATE_LIMITED', 'Too many quote checks at once. Try again in a moment.');
+    }
+    if (this.quoteProviders.has(provider)) {
+      throw httpError(429, 'RATE_LIMITED', 'A quote check for this provider is still running.');
     }
     const last = this.lastQuoteAt.get(provider) || 0;
     if (Date.now() - last < PER_PROVIDER_COOLDOWN_MS) {
@@ -127,15 +125,19 @@ class Taker {
     }
     this.lastQuoteAt.set(provider, Date.now());
     this.quotesInFlight++;
+    this.quoteProviders.add(provider);
     this.logs.note(`Asking ${provider} for a ${direction} quote of ${amount} sat.`);
 
-    fs.mkdirSync(paths.quoteDir, { recursive: true });
-    const dir = fs.mkdtempSync(path.join(paths.quoteDir, 'q-'));
+    let dir;
     try {
+      fs.mkdirSync(paths.quoteDir, { recursive: true, mode: 0o700 });
+      dir = fs.mkdtempSync(path.join(paths.quoteDir, 'q-'));
       const cfg = settings.load();
       const configFile = engine.writeConfig(
         path.join(dir, 'config.toml'),
-        engine.clientConfig(cfg, { dataDir: dir, provider, direction, amount }),
+        engine.clientConfig(cfg, {
+          dataDir: paths.clientDir, provider, direction, amount,
+        }),
       );
       const { stdout, code } = await runClient(['--quote-only'], configFile, QUOTE_TERM_MS, this.logs);
       const parsed = parseQuoteLine(stdout);
@@ -143,17 +145,17 @@ class Taker {
       throw httpError(200, 'NO_QUOTE', quoteFailureMessage(stdout, code), refusalFrom(stdout));
     } finally {
       this.quotesInFlight--;
-      // Sweep before removing: --quote-only returns before any record is written, but if that ever
-      // changes upstream, a record left in a directory we delete is a destroyed refund key.
-      this.rescueFrom(path.join(dir, 'swaps'), 'a quote check');
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+      this.quoteProviders.delete(provider);
+      if (dir) removeEmptyProbe(this, dir, 'a quote check');
     }
   }
 
   // --- swapping --------------------------------------------------------------------------------
 
   async startSwap({ provider, direction, amount }) {
+    provider = canonicalProvider(provider);
     if (this.state !== 'idle') throw httpError(409, 'BUSY', 'One swap at a time. Finish or stop the current one first.');
+    if (this.quotesInFlight) throw httpError(409, 'BUSY', 'Wait for the quote checks to finish.');
     if (!secrets.isConfigured()) throw httpError(400, 'NOT_CONFIGURED', 'Load your Pubky identity first.');
 
     const cfg = settings.load();
@@ -291,6 +293,7 @@ class Taker {
    */
   async resume() {
     if (this.state !== 'idle') throw httpError(409, 'BUSY', 'Something is already running.');
+    if (this.quotesInFlight) throw httpError(409, 'BUSY', 'Wait for the quote checks to finish.');
     if (!secrets.isConfigured()) throw httpError(400, 'NOT_CONFIGURED', 'Load your Pubky identity first.');
     const cfg = settings.load();
     fs.mkdirSync(paths.clientSwaps, { recursive: true });
@@ -330,23 +333,14 @@ class Taker {
   }
 
   /**
-   * Check that the loaded identity actually works, without going near a swap.
+   * Decrypt the loaded identity locally, without opening a network transport.
    *
    * The pubky it returns is the point. A wrong passphrase does not fail -- it silently derives a
    * different, perfectly valid identity -- so showing the operator which pubky they just loaded and
    * asking them to recognise it is the only place that mistake is catchable.
    *
-   * This used to be `--resume-only`, which needed no provider and no amount and printed the pubky
-   * on its way past. The engine now loads the identity *after* that mode has returned, on purpose:
-   * claiming or refunding a persisted swap needs the branch key on disk and nothing else, so an
-   * operator who has lost their phrase can still get their money out. That leaves `--quote-only`
-   * as the only mode that still loads it, and a quote needs a counterparty.
-   *
-   * So it names one that cannot exist, and stops the run the moment the identity line appears --
-   * which the engine prints before it asks anything of the provider, so nothing is sent, nothing
-   * is written to the operator's homeserver, and the log shows a check that ended rather than a
-   * swap that failed. `--no-rendezvous-iroh` keeps it from dialling a doorbell for the same
-   * reason. Neither guard is load-bearing on its own, and both are cheap.
+   * The helper uses the same recovery implementation as the pinned engine. This confirms the
+   * public key, while provider startup separately checks homeserver availability.
    */
   async probeIdentity() {
     if (!secrets.isConfigured()) throw httpError(400, 'NOT_CONFIGURED', 'Load a recovery phrase or file first.');
@@ -355,18 +349,16 @@ class Taker {
     try {
       const configFile = engine.writeConfig(
         path.join(dir, 'config.toml'),
-        // The amount is required and never used: the run ends before anything is quoted.
-        engine.clientConfig(settings.load(), { dataDir: dir, provider: NO_PROVIDER, amount: 1 }),
+        engine.clientConfig(settings.load(), { dataDir: dir }),
       );
       const { stdout, code } = await runClient(
-        ['--quote-only', '--no-rendezvous-iroh'], configFile, QUOTE_TERM_MS, this.logs, CLIENT_PUBKY_LINE,
+        [], configFile, IDENTITY_TERM_MS, this.logs, IDENTITY_BIN,
       );
-      const m = CLIENT_PUBKY_LINE.exec(stdout);
-      if (m) return { pubky: m[1] };
+      const m = IDENTITY_LINE.exec(stdout);
+      if (m && code === 0) return { pubky: m[1] };
       throw httpError(400, 'IDENTITY_FAILED', identityFailureMessage(stdout, code), refusalFrom(stdout));
     } finally {
-      this.rescueFrom(path.join(dir, 'swaps'), 'an identity check');
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+      removeEmptyProbe(this, dir, 'an identity check');
     }
   }
 
@@ -426,11 +418,18 @@ function sweepQuoteDirs(taker) {
   try {
     for (const entry of fs.readdirSync(paths.quoteDir)) {
       const dir = path.join(paths.quoteDir, entry);
-      total += taker.rescueFrom(path.join(dir, 'swaps'), 'an interrupted quote check');
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+      total += removeEmptyProbe(taker, dir, 'an interrupted quote check');
     }
   } catch { /* no quote directory yet */ }
   return total;
+}
+
+function removeEmptyProbe(taker, dir, description) {
+  const rescued = taker.rescueFrom(path.join(dir, 'swaps'), description);
+  // Preserve recovery data even if copying failed. Transport journals are independently durable.
+  if (fs.existsSync(path.join(dir, 'swaps')) || fs.existsSync(path.join(dir, 'transport'))) return rescued;
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  return rescued;
 }
 
 /**
@@ -441,29 +440,17 @@ function sweepQuoteDirs(taker) {
  * worth reading -- a provider that never answered, a refusal naming exactly what was wrong with
  * the price -- and those lines used to be captured for the return value and then dropped, so the
  * panel's log showed nothing at all for a check that had just failed in front of you.
- *
- * `stopWhen` ends the run as soon as the output matches it, for a caller that wants one line out
- * of the engine rather than an outcome. Everything printed up to that point is still returned, and
- * the exit that follows carries a signal rather than a code, so a caller that uses this reads the
- * line and not the code.
  */
-function runClient(args, configFile, termMs, logs, stopWhen = null) {
+function runClient(args, configFile, termMs, logs, bin = BIN) {
   return new Promise((resolve, reject) => {
     let child;
-    try { child = spawn(BIN, args, { env: engine.childEnv(configFile), stdio: ['ignore', 'pipe', 'pipe'] }); }
+    try { child = spawn(bin, args, { env: engine.childEnv(configFile), stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { return reject(httpError(500, 'CLIENT_MISSING', `Could not run the swap engine: ${e.message}`)); }
     let stdout = '';
     const capture = (stream) => (d) => {
       stdout += d.toString();
       if (stdout.length > 200000) stdout = stdout.slice(-200000);
       if (logs) logs.push(d, stream);
-      if (stopWhen && stopWhen.test(stdout)) {
-        stopWhen = null;
-        // Short grace: there is nothing to unwind. The client installs no signal handler, so this
-        // is a formality, and the escalation is there so a caller waiting on the line it already
-        // has can never wait on a process that will not go.
-        killProc(child, 2000, 3000);
-      }
     };
     child.stdout.on('data', capture('out'));
     child.stderr.on('data', capture('err'));
@@ -473,7 +460,7 @@ function runClient(args, configFile, termMs, logs, stopWhen = null) {
       clearTimeout(term); clearTimeout(hard);
       reject(httpError(500, 'CLIENT_MISSING', `Could not run the swap engine: ${e.message}`));
     });
-    child.on('exit', (code) => { clearTimeout(term); clearTimeout(hard); resolve({ stdout, code }); });
+    child.on('close', (code) => { clearTimeout(term); clearTimeout(hard); resolve({ stdout, code }); });
   });
 }
 

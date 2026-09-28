@@ -32,6 +32,10 @@ const ENDPOINTS = {
   offer: { path: '/offer', every: 15000, idle: 60000, timeout: 5000 },
 };
 
+function emptyEntry() {
+  return { value: null, fetchedAt: 0, error: null, inFlight: false, failures: 0 };
+}
+
 class StatusClient {
   constructor({ onChange = null } = {}) {
     this.onChange = onChange;
@@ -42,7 +46,7 @@ class StatusClient {
     this.running = false;
     this.watchers = 0;
     for (const name of Object.keys(ENDPOINTS)) {
-      this.entries.set(name, { value: null, fetchedAt: 0, error: null, inFlight: false });
+      this.entries.set(name, emptyEntry());
     }
   }
 
@@ -53,8 +57,9 @@ class StatusClient {
 
   /** Forget everything. Called whenever the provider process goes away. */
   reset() {
-    for (const entry of this.entries.values()) {
-      entry.value = null; entry.fetchedAt = 0; entry.error = null;
+    for (const name of this.entries.keys()) {
+      this.entries.set(name, emptyEntry());
+      this.schedule(name, 0);
     }
     if (this.onChange) this.onChange();
   }
@@ -124,6 +129,7 @@ class StatusClient {
       });
       if (!res.ok) throw new Error(`status API answered ${res.status}`);
       const value = await res.json();
+      if (this.entries.get(name) !== entry) return;
       const before = entry.value === null ? null : JSON.stringify(entry.value);
       entry.value = value;
       entry.fetchedAt = Date.now();
@@ -131,6 +137,7 @@ class StatusClient {
       entry.failures = 0;
       changed = before !== JSON.stringify(value);
     } catch (e) {
+      if (this.entries.get(name) !== entry) return;
       entry.failures = (entry.failures || 0) + 1;
       const message = e && e.name === 'TimeoutError' ? 'the status API did not answer in time' : String(e && e.message || e);
       changed = entry.error !== message;

@@ -28,6 +28,7 @@ const { Notices } = require('./lib/notices');
 const { StatusClient } = require('./lib/status-client');
 const { Provider } = require('./lib/provider');
 const { Taker } = require('./lib/taker');
+const { canonicalProvider } = require('./lib/pubky');
 const { Sse } = require('./lib/sse');
 const { createAccessGuard } = require('./lib/access');
 const {
@@ -242,8 +243,7 @@ const LEGACY_READ = new Set(['/api/status', '/api/config']);
 const LEGACY_WRITE = new Set(['/api/config', '/api/quote', '/api/swap', '/api/swap-cancel', '/api/control']);
 
 function validateSwapInput(body) {
-  const provider = String(body.provider || '').trim();
-  if (!/^[a-z0-9]{45,70}$/i.test(provider)) throw httpError(400, 'INVALID', 'That does not look like a provider pubky.');
+  const provider = canonicalProvider(body.provider);
   const direction = body.direction === 'submarine' ? 'submarine' : 'reverse';
   const amount = Math.floor(Number(body.amount));
   if (!Number.isFinite(amount) || amount < 1 || amount > 1e12) throw httpError(400, 'INVALID', 'Enter an amount in sats.');

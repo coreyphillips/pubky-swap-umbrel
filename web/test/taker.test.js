@@ -17,20 +17,31 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pubky-swap-taker-test-'))
 process.env.DATA_DIR = dataDir;
 process.env.NETWORK = 'regtest';
 
-// Stands in for swap-client, and behaves like one whose provider never answers: it says who the
-// identity is and then waits. Everything the identity check is asked to get right is visible in
-// what it prints before that, so it prints its arguments and the configuration it was given.
+const TEST_PUBKY = 'ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1y';
+
+// The quote stub writes the same state directories as the native client.
 const STUB = path.join(dataDir, 'swap-client-stub.sh');
 fs.writeFileSync(STUB, [
   '#!/bin/sh',
   'echo "argv: $*"',
   'cat "$PUBKY_SWAP_CONFIG"',
-  'echo "Client pubky: pk-from-the-stub"',
-  'sleep 5',
-  'echo "the run carried on"',
+  'quote_data=$(sed -n \'s/^data_dir = "\\(.*\\)"/\\1/p\' "$PUBKY_SWAP_CONFIG")',
+  'mkdir -p "$quote_data/transport/test-identity/test-provider"',
+  'echo durable > "$quote_data/transport/test-identity/test-provider/outbox.json"',
+  'sleep 0.1',
+  'echo "QUOTE provider=pk1 direction=Reverse amount_sat=250000 total_sat=253405"',
   '',
 ].join('\n'), { mode: 0o755 });
 process.env.SWAP_CLIENT_BIN = STUB;
+const IDENTITY_STUB = path.join(dataDir, 'swap-identity-stub.sh');
+fs.writeFileSync(IDENTITY_STUB, [
+  '#!/bin/sh',
+  'echo "argv: $*"',
+  'cat "$PUBKY_SWAP_CONFIG"',
+  `echo "IDENTITY pubky=${TEST_PUBKY}"`,
+  '',
+].join('\n'), { mode: 0o755 });
+process.env.SWAP_IDENTITY_BIN = IDENTITY_STUB;
 
 const paths = require('../lib/paths');
 const secrets = require('../lib/secrets');
@@ -130,15 +141,7 @@ test('the QUOTE line is parsed, and its Debug-cased direction folded', () => {
   assert.equal(parseQuoteLine('no quote here'), null);
 });
 
-/**
- * The identity check, after upstream moved the identity load out of `--resume-only`.
- *
- * Three things have to hold, and the stub can show all three. The check has to run the mode that
- * still loads the identity; it has to name a provider nothing can be sent to, because a quote
- * needs a counterparty and this one must not be a real person; and it has to stop at the line it
- * came for, so a check never turns into a run that outlives it.
- */
-test('the identity check reads the pubky and ends the run there', async () => {
+test('the identity check uses the offline helper without provider or amount', async () => {
   clearRecords();
   // Only so an identity counts as configured; the stub never looks at it.
   secrets.writePhrase('a phrase belonging to nobody, written by a test');
@@ -149,15 +152,47 @@ test('the identity check reads the pubky and ends the run there', async () => {
     const elapsed = Date.now() - started;
     const printed = logs.tailText(200);
 
-    assert.equal(pubky, 'pk-from-the-stub');
-    assert.match(printed, /--quote-only/, 'the only mode that still loads the identity');
-    assert.match(printed, /--no-rendezvous-iroh/, "a check rings nobody's doorbell");
-    assert.match(printed, /provider_pkarr = "identity-check-only"/, 'and names nobody as the provider');
-    assert.ok(!/the run carried on/.test(printed), 'the run must not outlive the line it was started for');
+    assert.equal(pubky, TEST_PUBKY);
+    assert.doesNotMatch(printed, /--quote-only|provider_pkarr|amount_sat/);
     assert.ok(elapsed < 4000, `the check waited ${elapsed}ms for a line it already had`);
   } finally {
     secrets.clearAll();
   }
+});
+
+test('quotes reuse scoped journals and cannot overlap a swap or recovery', async () => {
+  const t = taker();
+  const request = { provider: TEST_PUBKY, direction: 'reverse', amount: 250000 };
+  const first = t.quote(request);
+  await assert.rejects(t.quote(request), /still running/);
+  await assert.rejects(t.quote({ ...request, provider: `pubky${TEST_PUBKY}` }), /still running/);
+  await assert.rejects(t.startSwap(request), /quote checks/);
+  await assert.rejects(t.resume(), /quote checks/);
+  assert.equal((await first).total_sat, 253405);
+  await assert.rejects(t.quote({ ...request, provider: `pubky://${TEST_PUBKY}/` }), /just asked/);
+  const journal = path.join(paths.clientDir, 'transport', 'test-identity', 'test-provider', 'outbox.json');
+  assert.equal(fs.readFileSync(journal, 'utf8'), 'durable\n');
+  t.lastQuoteAt.clear();
+  await t.quote(request);
+  assert.match(paths.clientDir, /networks\/regtest\/client$/);
+  t.state = 'resuming';
+  await assert.rejects(t.quote(request), /current swap or recovery/);
+  t.rescueStranded();
+  assert.equal(fs.readFileSync(journal, 'utf8'), 'durable\n');
+  assert.deepEqual(fs.readdirSync(paths.quoteDir), []);
+});
+
+test('startup keeps journals and original recovery records from interrupted quote checks', () => {
+  const dir = path.join(paths.quoteDir, 'q-interrupted');
+  fs.mkdirSync(path.join(dir, 'transport'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'swaps'));
+  fs.writeFileSync(path.join(dir, 'transport', 'inbox.json'), '{"pending":[]}');
+  fs.writeFileSync(path.join(dir, 'swaps', 'recovered.json'), '{"swap_id":"recovered"}');
+  const t = taker();
+  t.rescueStranded();
+  assert.ok(fs.existsSync(path.join(paths.clientSwaps, 'recovered.json')));
+  assert.ok(fs.existsSync(path.join(dir, 'swaps', 'recovered.json')));
+  assert.equal(fs.readFileSync(path.join(dir, 'transport', 'inbox.json'), 'utf8'), '{"pending":[]}');
 });
 
 test.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
