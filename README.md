@@ -14,6 +14,10 @@ negotiation ride on the [Pubky](https://pubky.org) network.
 
 ## Install
 
+The community store currently installs published version `0.2.4`. This checkout prepares the
+`0.2.5` candidate. Use [the local candidate instructions](docs/LOCAL_CANDIDATE.md) to run the
+delivered ARM64 image, and see [the integration record](docs/DURABLE_INTEGRATION.md) for validation.
+
 In umbrelOS, go to the App Store, open the menu (top right), choose **Community App Stores**, and
 add:
 
@@ -25,7 +29,15 @@ Then install **Pubky Swap** from the Pubky store that appears.
 
 ## Update an existing installation
 
-After the community store has synchronized, use **Update** on the existing Pubky Swap app.
+This development update introduces separate data directories for each Bitcoin network. Old flat
+swap data requires an explicit migration into its verified network directory before startup. The
+app refuses to start when it finds that data, preserving the original files for recovery.
+
+Before updating an existing flat store, follow the [storage migration guide](docs/STORAGE_MIGRATION.md).
+It covers stopping all writers, verifying the original network, making a complete private backup,
+and moving the intact stores. Completed records also require migration.
+
+After `0.2.5` is published and the community store has synchronized, use **Update** on the existing Pubky Swap app.
 Finish active swaps first and keep a current backup of the app data. The update retains the
 `/data` volume containing settings, identity, funding-wallet state, and swap recovery records.
 Do not uninstall or reset the app to update it.
@@ -74,8 +86,8 @@ Setting it up:
    It has to be an identity that already exists, created in
    [Pubky Ring or pubky.app](https://pubky.app): the app signs in to your identity's homeserver
    and cannot create one, so a phrase you make up has no account behind it.
-3. It **checks your node** before anything starts, and shows you the pubky you just loaded so you
-   can recognise it. A wrong passphrase does not fail; it quietly derives a different identity,
+3. It loads the identity offline, then **checks your node** before anything starts, and shows you
+   the pubky you just loaded so you can recognise it. A wrong passphrase does not fail; it quietly derives a different identity,
    and that screen is the only place you would notice.
 4. Set your fees and limits, and share the pubky with anyone who wants to swap with you.
 
@@ -87,12 +99,15 @@ Use a Bitkit build that supports Pubky Swap connection links, such as the matchi
 
 Once the provider is running, **Overview > Connect** shows a QR code. Open Bitkit's scanner and
 scan it to save this provider and enable Pubky Swap. If you are viewing the dashboard on the same
-phone, tap **Open in Bitkit**, or use **Copy connection link** to share the connection.
+phone, tap **Open in Bitkit**, or use **Copy connection link** to share the connection. Authorize
+your swap identity through Pubky Ring when Bitkit prompts for it, then use the Savings transfer
+or supported payment flow. Both wallets need the funds or channel liquidity for that direction.
 
 The code contains only the public provider pubky and its Bitcoin network:
 `pubkyswap://connect?pubky=<52-character-pubky>&network=bitcoin`. Supported network values are
-`bitcoin`, `testnet`, `signet`, and `regtest`; Umbrel's `mainnet` is encoded as `bitcoin`. Bitkit
-must use the same network. The code is generated locally with a bundled QR encoder and contains
+`bitcoin`, `testnet`, `signet`, and `regtest`; Umbrel's `mainnet` is encoded as `bitcoin`. The
+current Bitkit integration supports mainnet and regtest swaps and must use the same network.
+The code is generated locally with a bundled QR encoder and contains
 no recovery phrase, macaroon, API token, or Umbrel address. The card waits for the daemon's live
 identity and network before offering a connection.
 
@@ -101,7 +116,7 @@ identity and network before offering a connection.
 Channel purchases and incoming-payment channel creation are planned separately in
 [tracking issue #84](https://github.com/coreyphillips/pubky-swap/issues/84). It covers the provider,
 Umbrel, and Bitkit work, including funding and refund recovery, mainnet and regtest testing, and
-the remaining requirements for replacing Blocktank. This release adds connection setup only.
+the remaining requirements for replacing Blocktank. Ordinary swaps use the provider's existing liquidity.
 
 ### The advertised minimum is not always the one you set
 
@@ -112,11 +127,18 @@ actually being advertised, and says so when your configured minimum is not it.
 
 ### Where your swap records live
 
-`${APP_DATA_DIR}/data/client/swaps` holds the records for swaps **you** took. A submarine swap's
+`${APP_DATA_DIR}/data/networks/<network>/client/swaps` holds the records for swaps **you** took.
+Each Bitcoin network has a separate provider and client store. A submarine swap's
 refund key is generated there and exists nowhere else in the world. Losing it does not fail the
 swap; it makes the on-chain output unspendable by anyone, forever. The app will not delete those
 records, resumes any it finds still open when it starts, and says so before you do anything that
 would remove them.
+
+Delivery journals also live on the persistent volume. Keep the full `/data` directory in backups,
+including `networks`, settings, and identity files. Quote checks reuse the client journals;
+the engine separates them further by identity and provider. Expired read-only resources are cleaned
+up when that provider is used again. Changing a provider or finishing one swap does not clear a
+conversation used by another swap.
 
 ## Two things worth knowing
 
@@ -165,8 +187,8 @@ digest, which cannot be known before the build publishes it.
 So a release is three steps:
 
 1. Merge the code, leaving `version` in `umbrel-app.yml` and the image line alone.
-2. Push a tag (`v0.2.0`). `build-image.yml` resolves `main` to a commit, builds each architecture
-   on a runner of that architecture, stitches them into one manifest list, and prints the exact
+2. Push a tag (`v0.2.5`). `build-image.yml` uses the reviewed upstream pin in the Dockerfile, builds
+   each architecture on a runner of that architecture, stitches them into one manifest list, and prints the exact
    `image:` line to use, digest included, alongside the pubky-swap commit it was built from.
 3. Open a second PR bumping `version` and the image tag and digest together. That is the only
    commit that changes what Umbrel installs, and it cannot merge until the thing it names is real.
@@ -183,6 +205,9 @@ operator can point the provider at a [beignet](https://github.com/coreyphillips/
 instead of LND without a different image. `iroh` is the doorbell someone handed only your pubky
 rings, and what lets a provider serve clients holding a scoped Pubky session rather than an
 account key, which is how the mobile apps sign in. `PUBKY_SWAP_REF` selects the upstream commit.
+The default is `ca3d5f375da4f1248023a33d7e5c060083e5fc72`, built with Rust 1.95.0 and the upstream
+lockfile. The image also includes `swap-identity`, an offline helper using the same recovery
+implementation. It prints the public key without opening a network connection or creating a swap.
 
 ## Running the tests
 

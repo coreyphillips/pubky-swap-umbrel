@@ -14,6 +14,18 @@ on:
     branches: [main]
 
 jobs:
+  dashboard-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm test
+        working-directory: web
+      - run: sh -n docker/entrypoint.sh docker/test-identity.sh
+
   lint:
     runs-on: ubuntu-latest
     steps:

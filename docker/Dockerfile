@@ -4,16 +4,16 @@
 # ghcr on tag. Nothing is compiled on the user's node.
 
 # ---- Stage 1: the swap binaries ----
-FROM rust:1-bookworm AS rust-build
+FROM rust:1.95.0-bookworm AS rust-build
 
 # protoc compiles LND's protobufs (feature `lnd`). Everything else the build needs is in the base.
 RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler git \
     && rm -rf /var/lib/apt/lists/*
 
 ARG PUBKY_SWAP_REPO=https://github.com/coreyphillips/pubky-swap.git
-# Pinned by the release build to the exact commit an app version was cut from, so an image can be
-# rebuilt byte-for-byte from its tag rather than from whatever main happened to be.
-ARG PUBKY_SWAP_REF=main
+# Pin the reviewed engine source and retain its lockfile when rebuilding an app version.
+ARG PUBKY_SWAP_REF=ca3d5f375da4f1248023a33d7e5c060083e5fc72
+ARG TARGETARCH
 
 WORKDIR /src
 # Fetched by ref rather than cloned by branch, so PUBKY_SWAP_REF can be a commit SHA as well as a
@@ -34,23 +34,26 @@ RUN git init -q . \
 # unlinkable and also means a recipient cannot enumerate who has written to them: the provider
 # polls only pubkys it already knows. A stranger handed the provider's pubky sends a quote request
 # into a mailbox nobody opens. The rendezvous is how they announce themselves first.
-RUN cargo build --release -p swap-provider -p swap-client --features full,beignet,iroh \
+COPY docker/identity-probe.rs /src/swap-client/examples/umbrel_identity.rs
+RUN --mount=type=cache,id=pubky-swap-target-${TARGETARCH},target=/src/target,sharing=locked \
+    cargo build --locked --release -p swap-provider -p swap-client \
+        --features full,beignet,iroh --bins --example umbrel_identity \
     && cp target/release/swap-provider /usr/local/bin/swap-provider \
     && cp target/release/swap-client /usr/local/bin/swap-client \
-    && strip /usr/local/bin/swap-provider /usr/local/bin/swap-client
+    && cp target/release/examples/umbrel_identity /usr/local/bin/swap-identity \
+    && strip /usr/local/bin/swap-provider /usr/local/bin/swap-client /usr/local/bin/swap-identity
 
 # The dashboard is built entirely on the provider's read-only status API, and reads nothing out of
 # the daemon's logs. If that feature ever falls out of the build, the panel would come up with
 # nothing to show and no error to explain it, so fail the build here instead.
 #
-# The client's three are the modes the panel drives it in: recovery, the quote check, and the
-# identity check, which is `--quote-only` with the doorbell off. A flag that disappears is an
-# upstream change the panel has to be taught about, and this is a cheaper place to find out than
+# The client provides recovery and quote checks. Identity loading uses the offline helper.
+# A flag that disappears is an upstream change the panel has to be taught about. Check here before
 # somebody's node.
 RUN /usr/local/bin/swap-provider --help | grep -q -- '--status-addr' \
     && /usr/local/bin/swap-client --help | grep -q -- '--resume-only' \
     && /usr/local/bin/swap-client --help | grep -q -- '--quote-only' \
-    && /usr/local/bin/swap-client --help | grep -q -- '--no-rendezvous-iroh'
+    && /usr/local/bin/swap-client --help | grep -q -- '--negotiation'
 
 # ---- Stage 2: the runtime ----
 FROM node:20-bookworm-slim
@@ -62,6 +65,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 COPY --from=rust-build /usr/local/bin/swap-provider /usr/local/bin/swap-provider
 COPY --from=rust-build /usr/local/bin/swap-client /usr/local/bin/swap-client
+COPY --from=rust-build /usr/local/bin/swap-identity /usr/local/bin/swap-identity
+
+# Exercise dynamic linking in the actual runtime image, including offline identity loading.
+COPY docker/test-identity.sh /tmp/test-identity.sh
+RUN /usr/local/bin/swap-provider --help > /dev/null \
+    && /usr/local/bin/swap-client --help > /dev/null \
+    && sh /tmp/test-identity.sh /usr/local/bin/swap-identity \
+    && rm /tmp/test-identity.sh
 
 WORKDIR /app
 COPY web/package*.json ./
@@ -76,6 +87,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 ENV DATA_DIR=/data \
     SWAP_PROVIDER_BIN=/usr/local/bin/swap-provider \
     SWAP_CLIENT_BIN=/usr/local/bin/swap-client \
+    SWAP_IDENTITY_BIN=/usr/local/bin/swap-identity \
     PORT=3000
 
 EXPOSE 3000

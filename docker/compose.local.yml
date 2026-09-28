@@ -1,0 +1,39 @@
+name: pubky-swap-candidate
+
+services:
+  server:
+    image: pubky-swap-app:durable-20260928
+    platform: linux/arm64
+    pull_policy: never
+    init: true
+    stop_grace_period: 1m
+    ports:
+      - "127.0.0.1:${CANDIDATE_PORT:-53010}:3000"
+    environment:
+      PORT: "3000"
+      DATA_DIR: /data
+      NETWORK: ${CANDIDATE_NETWORK:?Set the backend Bitcoin network}
+      LND_IP: ${CANDIDATE_LND_HOST:?Set the reachable LND hostname}
+      LND_GRPC_PORT: ${CANDIDATE_LND_PORT:-10009}
+      LND_DIR: /lnd
+      ELECTRS_IP: ${CANDIDATE_ELECTRUM_HOST:?Set the reachable Electrum hostname}
+      ELECTRS_PORT: ${CANDIDATE_ELECTRUM_PORT:-50001}
+      CONTROL_PLANE_ALLOW: ${CANDIDATE_CONTROL_PLANE_ALLOW:-}
+    volumes:
+      - candidate-data:/data
+      - type: bind
+        source: ${CANDIDATE_LND_DIR:?Set an absolute LND data directory}
+        target: /lnd
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - backend
+
+volumes:
+  candidate-data: {}
+
+networks:
+  backend:
+    external: true
+    name: ${CANDIDATE_BACKEND_NETWORK:?Set the existing backend Docker network}

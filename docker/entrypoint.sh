@@ -10,9 +10,9 @@ DATA_DIR="${DATA_DIR:-/data}"
 # client/swaps is named explicitly because of what is in it: a submarine swap's refund key is
 # generated there and exists nowhere else, so a directory the app cannot write, or one left
 # readable, is the difference between a refundable HTLC and coins nobody can move.
-mkdir -p "$DATA_DIR/secrets" "$DATA_DIR/swap" "$DATA_DIR/client/swaps" "$DATA_DIR/quote"
+mkdir -p "$DATA_DIR/secrets" "$DATA_DIR/networks"
 chown -R 1000:1000 "$DATA_DIR"
-chmod 700 "$DATA_DIR" "$DATA_DIR/secrets" "$DATA_DIR/client/swaps"
+chmod 700 "$DATA_DIR" "$DATA_DIR/secrets" "$DATA_DIR/networks"
 
 # Run as UID 1000. The swap daemons this supervises inherit it, so nothing in this container
 # writes as root: a data directory owned by root is one a later version running unprivileged

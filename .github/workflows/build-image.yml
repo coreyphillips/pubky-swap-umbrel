@@ -18,12 +18,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Image tag to publish (defaults to the app version in the manifest)"
+        description: "Image tag to publish (defaults to the dashboard package version)"
         required: false
       pubky_swap_ref:
-        description: "pubky-swap git ref to build from"
+        description: "pubky-swap revision (defaults to the reviewed Dockerfile pin)"
         required: false
-        default: "main"
 
 env:
   IMAGE: ghcr.io/coreyphillips/pubky-swap-app
@@ -46,10 +45,10 @@ jobs:
           elif [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION="${{ github.event.inputs.version }}"
           else
-            VERSION=$(grep -oE '^version: *"[^"]+"' pubky-swap/umbrel-app.yml | sed 's/.*"\(.*\)"/\1/')
+            VERSION=$(node -p "require('./web/package.json').version")
           fi
           REF="${{ github.event.inputs.pubky_swap_ref }}"
-          [ -n "$REF" ] || REF=main
+          [ -n "$REF" ] || REF=$(sed -n 's/^ARG PUBKY_SWAP_REF=//p' docker/Dockerfile)
 
           # Resolved to a commit here rather than left as a branch name, so both architectures
           # build the same source and the release PR can say which. "main" moves; an image whose
