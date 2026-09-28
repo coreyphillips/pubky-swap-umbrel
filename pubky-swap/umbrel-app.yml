@@ -2,7 +2,7 @@ manifestVersion: 1
 id: pubky-swap
 category: bitcoin
 name: Pubky Swap
-version: "0.2.4"
+version: "0.2.5"
 tagline: Run a self-hosted Lightning to on-chain swap provider on your own node
 icon: https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/icon.svg
 gallery:
@@ -45,20 +45,23 @@ dependencies:
   # whichever server is installed without declaring anything.
   - lightning
 releaseNotes: >-
-  Connect Bitkit to your provider from the Overview with one scan. The new Connect card shows a
-  QR code, a copyable connection link, and an Open in Bitkit action for use on the same phone.
+  Update the swap engine with durable message delivery, bounded retries and persistent recovery
+  journals. Identity loading is now offline, and provider status refreshes promptly after restart.
 
 
-  The code includes only your public provider identity and Bitcoin network. It is generated on
-  your node and appears once the running provider reports a matching identity and network.
+  Swap storage is separated by Bitcoin network. Existing flat stores, including completed
+  records, require an explicit migration before updating. Stop the app and follow
+  https://github.com/coreyphillips/pubky-swap-umbrel/blob/main/docs/STORAGE_MIGRATION.md.
+  Preserve the complete data volume, identity, delivery journals and recovery records.
 
 
-  Use a Bitkit build with Pubky Swap connection-link support. Scanning saves your provider,
-  enables Pubky Swap, and opens the Pubky Ring identity picker when an identity is needed.
+  Connect a matching Bitkit development build through Overview > Connect and authorize its
+  identity with the matching Ring build. Funded regtest validated a Savings swap across both
+  app and provider restarts, plus an exact Bitcoin payment from Spending, with no duplicate payments.
 
 
-  The dashboard's diagnostic version now matches this release. Existing settings, identity,
-  funding-wallet data, and swap recovery records stay in the app's persistent data volume.
+  AMD64 and ARM64 images are published together and pinned to their verified digest.
+  See docs/DURABLE_INTEGRATION.md in the repository for the tested builds and current limits.
 path: ""
 defaultUsername: ""
 defaultPassword: ""

@@ -1,6 +1,6 @@
 # Bitkit durable delivery integration
 
-This is an unpublished local integration candidate prepared on 2026-09-28. It connects the
+Release `0.2.5`, prepared on 2026-09-28, connects the
 Umbrel provider, pubky-swap-boltz, bitkit-core, and the Android `feat/pubky-swap-boltz` branch.
 The upstream contract is documented in
 [BITKIT_HANDOFF.md](https://github.com/coreyphillips/pubky-swap/blob/main/docs/BITKIT_HANDOFF.md).
@@ -12,7 +12,7 @@ The upstream contract is documented in
 | Swap engine and transport | `ca3d5f375da4f1248023a33d7e5c060083e5fc72` |
 | Messenger | `4fff0ce2183f7273c0418801c262ed291a0a145a` |
 | Rust | `1.95.0` |
-| Umbrel dashboard candidate | `0.2.5` |
+| Umbrel dashboard release | `0.2.5` |
 | Local Android core package | `0.5.14-pubky-durable-20260928-local` |
 
 Core still uses a local wrapper path override. The wrapper itself fetches the exact swap
@@ -21,8 +21,8 @@ wrapper and replacing that final local override with its immutable revision.
 
 ## Connect a matching Bitkit build
 
-Use [the local candidate instructions](LOCAL_CANDIDATE.md) to select the delivered image.
-The normal community-store installation still selects `0.2.4`.
+The community store selects the published `0.2.5` image. The separate
+[local candidate instructions](LOCAL_CANDIDATE.md) cover the retained ARM64 test archive.
 
 1. Use the mainnet build for `bitcoin`, or the development build for `regtest`. Install the
    matching Pubky Ring build with the same signing certificate.
@@ -74,6 +74,10 @@ invoice payment. Developer Settings exposes paused delivery operations for delib
 - Release validation and storage migration tests: 15 passed in isolated Node 20 Linux without
   networking. The release checker also accepted the existing published `0.2.4` image, matching
   the tag to its exact digest and confirming both runnable Linux architectures.
+- The published `0.2.5` tag and combined digest matched through anonymous registry access.
+  Both published AMD64 and ARM64 images passed CLI and valid/invalid offline identity checks,
+  plus unconfigured mainnet and regtest dashboard startup, version, page and private-volume
+  permission checks. All runtime smoke containers had networking disabled and no host data mounts.
 - A later isolated funded setup imported an existing registered identity through Ring, selected
   and authenticated it through Bitkit, and connected Bitkit to the same regtest Electrum server.
   Bitkit received 2,000,000 regtest sats and opened a 1,000,000-sat channel to the provider's LND.
@@ -86,6 +90,14 @@ invoice payment. Developer Settings exposes paused delivery operations for delib
   Bitkit automatically claimed 47,369 sats with a 140-sat claim fee. The original invoice settled
   with one HTLC; no new swap, repeat payment or manual claim was needed. The claim transaction
   was confirmed in the isolated chain. The quote's conservative receive estimate was 46,604 sats.
+- The Bitcoin payment flow from Spending paid exactly 25,000 sats to a separate regtest wallet.
+  Its 28,346-sat invoice settled once, and the claim spent a 25,900-sat lockup with the reviewed
+  900-sat fee. An expired review was rejected before creating or paying a swap; normal retry
+  with refreshed terms succeeded. The recipient output was independently confirmed.
+- At final height 128, both original swaps were claimed, both original invoices were settled
+  with one HTLC each, and the provider reported zero active swaps, in-flight swaps or committed
+  sats. A final Bitkit restart preserved both results without creating another invoice. The
+  isolated containers and emulator were stopped with their data retained.
 
 The local image is `pubky-swap-app:durable-20260928`, image ID
 `sha256:fb52657c69671b28006e9bf87227c50a49c913061287b4d48cac10f2338c9052`.
@@ -108,6 +120,9 @@ The Android checkout contains the installable artifacts in
 
 Both are version `2.4.1` build `191`. Pair them with the existing Ring demo APK at
 `android/app/build/outputs/apk/release/pubky-ring-demo.apk` in the Ring checkout.
+These are local debug builds. A differently signed production Ring installation cannot grant
+their shared-identity permission, and the mainnet Firebase placeholder does not provide
+production push messaging.
 The shared certificate SHA-256 is
 `84d38f92d272f49992d8d583ae6b0b5c7b1914340b69ca6f619c93693bf47971`.
 The arm64 `libbitkitcore.so` SHA-256 in both apps and the AAR is
@@ -131,16 +146,19 @@ passed. Physical camera capture has not been exercised.
 - The selected client and replacement provider identities sign in through both the pinned legacy
   SDK and the modern SDK. No new account was created. The current builds do not expose local
   Pubky resolver configuration. The funded check above covers one reverse swap across both
-  process restarts; two concurrent mobile swaps and full cleanup/reorg behavior remain unverified.
+  process restarts. Two concurrent mobile swaps, process interruption during negotiation dispatch,
+  live paused-delivery retry, and full cleanup/reorg behavior remain unverified on the device.
 - Live and mobile performance measurements remain tracked in
   [issue 85](https://github.com/coreyphillips/pubky-swap/issues/85).
 
 ## Publication
 
-The installed Umbrel manifest still names the existing published `0.2.4` image. After the
-candidate passes validation, publish both image architectures, then update the manifest and
-compose file to the actual `0.2.5` manifest digest. Never replace that digest with an invented
-value or an image that has not been published.
+The implementation merged in [PR 29](https://github.com/coreyphillips/pubky-swap-umbrel/pull/29).
+The signed `v0.2.5` tag selects source commit `28ecafa93240a1df6ff67a93d99fe7e9e2498d3a`.
+The [native image build](https://github.com/coreyphillips/pubky-swap-umbrel/actions/runs/36466802403)
+passed for AMD64 and ARM64. The store manifest and compose file pin the published image:
+
+`ghcr.io/coreyphillips/pubky-swap-app:0.2.5@sha256:abbe9dfb7a3743a51416b8f910de561da3736c4cd9eb0c29845a10e37c39981f`.
 
 Publish and pin the wrapper dependency before describing the core source as independently
 reproducible. Existing unrelated local changes in the downstream repositories remain preserved.

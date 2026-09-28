@@ -1,8 +1,9 @@
 # Run the local ARM64 candidate
 
-The community-store manifest still selects published version `0.2.4`. Loading the local archive
-does not change that installation. The following separate instance explicitly selects the
-`0.2.5` candidate and uses a new persistent data volume. It requires an ARM64 Docker host and an
+The community store now selects published version `0.2.5`. These instructions retain the local
+ARM64 test archive as a separate installation option. Loading it does not change an existing
+community-store installation. This separate instance uses a new persistent data volume.
+It requires an ARM64 Docker host and an
 already configured LND and Electrum backend on the same Bitcoin chain.
 
 From this checkout, verify and load the delivered archive:
@@ -15,8 +16,8 @@ docker image inspect pubky-swap-app:durable-20260928 --format '{{.Id}} {{.Archit
 
 The result must be
 `sha256:fb52657c69671b28006e9bf87227c50a49c913061287b4d48cac10f2338c9052 arm64`.
-The archive is a local artifact, not a registry release. On AMD64, build a matching candidate
-for that platform or wait for the published multi-architecture image.
+The archive is the local test artifact. Use the published multi-architecture image for an AMD64
+installation through the community store.
 
 Set these environment variables for your backend before running Compose:
 
@@ -77,5 +78,5 @@ To stop this instance while retaining recovery state:
 docker compose -f docker/compose.local.yml stop
 ```
 
-Keep the complete data volume while swaps or channels require recovery. A future community-store
-update will require publishing the candidate and updating the manifest to its actual digest.
+Keep the complete data volume while swaps or channels require recovery. The local Compose file
+continues to select the archive tag; community-store updates use the published registry digest.

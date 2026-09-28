@@ -14,9 +14,9 @@ negotiation ride on the [Pubky](https://pubky.org) network.
 
 ## Install
 
-The community store currently installs published version `0.2.4`. This checkout prepares the
-`0.2.5` candidate. Use [the local candidate instructions](docs/LOCAL_CANDIDATE.md) to run the
-delivered ARM64 image, and see [the integration record](docs/DURABLE_INTEGRATION.md) for validation.
+The community store installs version `0.2.5` for AMD64 and ARM64. See
+[the integration record](docs/DURABLE_INTEGRATION.md) for the matching Bitkit and Ring builds
+and the funded regtest results.
 
 In umbrelOS, go to the App Store, open the menu (top right), choose **Community App Stores**, and
 add:
@@ -37,7 +37,7 @@ Before updating an existing flat store, follow the [storage migration guide](doc
 It covers stopping all writers, verifying the original network, making a complete private backup,
 and moving the intact stores. Completed records also require migration.
 
-After `0.2.5` is published and the community store has synchronized, use **Update** on the existing Pubky Swap app.
+After the community store has synchronized, use **Update** on the existing Pubky Swap app.
 Finish active swaps first and keep a current backup of the app data. The update retains the
 `/data` volume containing settings, identity, funding-wallet state, and swap recovery records.
 Do not uninstall or reset the app to update it.
@@ -91,7 +91,8 @@ Setting it up:
    and that screen is the only place you would notice.
 4. Set your fees and limits, and share the pubky with anyone who wants to swap with you.
 
-Your fee is `base_fee + amount x fee_ppm / 1_000_000`, and the miner fee is quoted on top at cost.
+Your fee is `base_fee + amount x fee_ppm / 1_000_000`, with an estimated on-chain allowance
+quoted on top. That allowance includes reserves and a safety margin.
 
 ### Connect Bitkit with one scan
 
@@ -120,19 +121,18 @@ the remaining requirements for replacing Blocktank. Ordinary swaps use the provi
 
 ### The advertised minimum is not always the one you set
 
-The engine never advertises a swap smaller than ten times its own on-chain cost, because below
+The engine never advertises a swap smaller than ten times its on-chain allowance, because below
 that the fee is most of the trade. That floor is re-priced against a live fee estimate, so at
-5 sat/vB it is around 11,500 sat and at 45 sat/vB it is over 100,000. The panel shows the number
+5 sat/vB it is around 13,950 sat and at 45 sat/vB it is over 100,000. The panel shows the number
 actually being advertised, and says so when your configured minimum is not it.
 
 ### Where your swap records live
 
 `${APP_DATA_DIR}/data/networks/<network>/client/swaps` holds the records for swaps **you** took.
-Each Bitcoin network has a separate provider and client store. A submarine swap's
-refund key is generated there and exists nowhere else in the world. Losing it does not fail the
-swap; it makes the on-chain output unspendable by anyone, forever. The app will not delete those
-records, resumes any it finds still open when it starts, and says so before you do anything that
-would remove them.
+Each Bitcoin network has a separate provider and client store. These records hold the taker's
+submarine refund key. Losing them can permanently remove your ability to refund an unsuccessful
+swap. The app preserves those records, resumes any it finds still open when it starts, and says
+so before you do anything that would remove them.
 
 Delivery journals also live on the persistent volume. Keep the full `/data` directory in backups,
 including `networks`, settings, and identity files. Quote checks reuse the client journals;
