@@ -205,7 +205,7 @@ operator can point the provider at a [beignet](https://github.com/coreyphillips/
 instead of LND without a different image. `iroh` is the doorbell someone handed only your pubky
 rings, and what lets a provider serve clients holding a scoped Pubky session rather than an
 account key, which is how the mobile apps sign in. `PUBKY_SWAP_REF` selects the upstream commit.
-The default is `ca3d5f375da4f1248023a33d7e5c060083e5fc72`, built with Rust 1.95.0 and the upstream
+The default is `8d5e7059d82c1dd06c3013bd038821a5c1ebaaca`, built with Rust 1.95.0 and the upstream
 lockfile. The image also includes `swap-identity`, an offline helper using the same recovery
 implementation. It prints the public key without opening a network connection or creating a swap.
 
