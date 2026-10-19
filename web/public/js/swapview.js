@@ -315,4 +315,17 @@ export function timeoutLine(swap, tipHeight) {
   return `Refund opens at block ${swap.timeout_height.toLocaleString()}, about ${left} block${left === 1 ? '' : 's'} away (${fmt.blocksToTime(left)}).`;
 }
 
+/**
+ * What the provider's side of a swap cost in miner fees.
+ *
+ * The figure a swap is priced at is an estimate made when it was quoted. Once a swap the provider
+ * funded has finished, the engine measures what that funding actually paid, and the two belong
+ * side by side: the gap between them is part of the margin.
+ */
+export function minerCostLine(swap) {
+  const charged = fmt.sats(swap.onchain_fee_sat);
+  if (swap.funding_fee_sat == null) return `${charged} (priced at quote time, not measured)`;
+  return `${charged} charged, ${fmt.sats(swap.funding_fee_sat)} paid to fund it`;
+}
+
 export { STALL_SECS };

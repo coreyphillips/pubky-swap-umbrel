@@ -48,6 +48,16 @@ test('funding is an outpoint, and absent rather than half-formed', () => {
   assert.equal(project(record({ funding_vout: undefined })).funding, null);
 });
 
+test('the claim that ended a swap and what its funding paid come through, and are absent until known', () => {
+  const view = project(record({ claim_observed_txid_hex: 'dd'.repeat(32), funding_fee_sat: 775 }));
+  assert.equal(view.observed_claim, 'dd'.repeat(32));
+  assert.equal(view.funding_fee_sat, 775);
+
+  const unknown = project(record());
+  assert.equal(unknown.observed_claim, null);
+  assert.equal(unknown.funding_fee_sat, null);
+});
+
 test('terminality matches the engine', () => {
   for (const state of ['claimed', 'refunded', 'expired', 'failed']) {
     assert.ok(isTerminal(project(record({ state: { state } }))), `${state} is terminal`);

@@ -11,7 +11,7 @@ import { el, fill } from '../dom.js';
 import * as fmt from '../format.js';
 import * as c from '../components.js';
 import { api } from '../api.js';
-import { track, stepList, describeSwap, exposureLine, timeoutLine, directionLabel, retryPhrase } from '../swapview.js';
+import { track, stepList, describeSwap, exposureLine, timeoutLine, directionLabel, retryPhrase, minerCostLine } from '../swapview.js';
 
 let filter = 'all';
 let search = '';
@@ -129,7 +129,7 @@ function matches(swap) {
 
 function searches(swap) {
   if (!search) return true;
-  const hay = `${swap.swap_id} ${swap.peer} ${swap.funding || ''} ${swap.spend || ''}`.toLowerCase();
+  const hay = `${swap.swap_id} ${swap.peer} ${swap.funding || ''} ${swap.spend || ''} ${swap.observed_claim || ''}`.toLowerCase();
   return hay.includes(search);
 }
 
@@ -225,7 +225,7 @@ function detailModal(swap, snap) {
     ? [
       ['Amount', fmt.sats(swap.onchain_amount_sat)],
       ['Your fee', `+${fmt.sats(swap.service_fee_sat)}`],
-      ['Miner cost', `${fmt.sats(swap.onchain_fee_sat)} (priced at quote time, not measured)`],
+      ['Miner cost', minerCostLine(swap)],
     ]
     : [
       ['Amount', fmt.sats(swap.onchain_amount_sat)],
@@ -268,7 +268,13 @@ function detailModal(swap, snap) {
           ['Counterparty', c.copyText(swap.peer, { short: true })],
           ['Swap id', c.copyText(swap.swap_id, { short: true })],
           ['Funding', swap.funding ? c.copyText(swap.funding, { short: true }) : 'not broadcast'],
-          ['Spend', swap.spend ? c.copyText(swap.spend, { short: true }) : 'not broadcast'],
+          // The engine's own spend is its claim or refund. A swap the other side claimed needs
+          // neither, and "not broadcast" there read as if nothing had spent the funding, so their
+          // claim is shown instead.
+          ['Their claim', swap.observed_claim ? c.copyText(swap.observed_claim, { short: true }) : null],
+          ['Your spend', swap.spend
+            ? c.copyText(swap.spend, { short: true })
+            : (swap.observed_claim ? null : 'not broadcast')],
           ['Timeout', timeoutLine(swap, tip)],
           ['Confirmations required', swap.required_confirmations || null],
           ['Reorg', swap.reorg_seen_at_height ? `seen at height ${swap.reorg_seen_at_height}` : null],
