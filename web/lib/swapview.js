@@ -47,11 +47,13 @@ function project(record) {
     onchain_amount_sat: num(record.onchain_amount_sat),
     service_fee_sat: num(record.service_fee_sat),
     onchain_fee_sat: num(record.onchain_fee_sat),
+    funding_fee_sat: record.funding_fee_sat == null ? null : num(record.funding_fee_sat),
     quote_total_sat: num(record.quote_total_sat),
     required_confirmations: num(record.required_confirmations),
     timeout_height: num(record.timeout_height),
     funding,
     spend: record.spend_txid_hex ? String(record.spend_txid_hex) : null,
+    observed_claim: record.claim_observed_txid_hex ? String(record.claim_observed_txid_hex) : null,
     reorg_seen_at_height: record.reorg_seen_at_height == null ? null : num(record.reorg_seen_at_height),
     // Zero on a record written before the engine stamped a creation time, which reads as unknown.
     created_at_unix: num(record.created_at_unix),
