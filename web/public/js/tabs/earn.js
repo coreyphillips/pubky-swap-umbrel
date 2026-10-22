@@ -5,6 +5,7 @@
 // The rate editor lives here rather than in Settings because it is the maker's economic control and
 // belongs next to the outcome it produces. Settings holds identity, backends and danger.
 
+import { accessCard } from '../access-policy.js';
 import { el, fill } from '../dom.js';
 import * as fmt from '../format.js';
 import * as c from '../components.js';
@@ -24,6 +25,7 @@ export default {
       el('div', { attrs: { id: 'earnState' } }),
       el('div', { attrs: { id: 'earnEarnings' } }),
       el('div', { attrs: { id: 'earnRates' } }),
+      accessCard(),
       el('div', { attrs: { id: 'earnOffer' } })));
   },
 

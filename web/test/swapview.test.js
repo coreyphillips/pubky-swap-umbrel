@@ -66,3 +66,11 @@ test('terminality matches the engine', () => {
     assert.ok(!isTerminal(project(record({ state: { state } }))), `${state} is not terminal`);
   }
 });
+
+
+test('session accounts are visible separately from device keys', () => {
+  const view = project(record({ peer: 'device', peer_account: 'account' }));
+  assert.equal(view.peer, 'device');
+  assert.equal(view.peer_account, 'account');
+  assert.equal(project(record()).peer_account, null);
+});

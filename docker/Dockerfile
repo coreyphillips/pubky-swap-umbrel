@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compil
 
 ARG PUBKY_SWAP_REPO=https://github.com/coreyphillips/pubky-swap.git
 # Pin the reviewed engine source and retain its lockfile when rebuilding an app version.
-ARG PUBKY_SWAP_REF=8d5e7059d82c1dd06c3013bd038821a5c1ebaaca
+ARG PUBKY_SWAP_REF=03216e6b415a95da57b5bb7c03a1d9802115598e
 ARG TARGETARCH
 
 WORKDIR /src
@@ -51,6 +51,8 @@ RUN --mount=type=cache,id=pubky-swap-target-${TARGETARCH},target=/src/target,sha
 # A flag that disappears is an upstream change the panel has to be taught about. Check here before
 # somebody's node.
 RUN /usr/local/bin/swap-provider --help | grep -q -- '--status-addr' \
+    && /usr/local/bin/swap-provider --help | grep -q -- '--access-policy-file' \
+    && /usr/local/bin/swap-provider --help | grep -q -- '--check-access-policy' \
     && /usr/local/bin/swap-client --help | grep -q -- '--resume-only' \
     && /usr/local/bin/swap-client --help | grep -q -- '--quote-only' \
     && /usr/local/bin/swap-client --help | grep -q -- '--negotiation'

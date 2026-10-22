@@ -112,6 +112,33 @@ The code is generated locally with a bundled QR encoder and contains
 no recovery phrase, macaroon, API token, or Umbrel address. The card waits for the daemon's live
 identity and network before offering a connection.
 
+### Control who can use your provider
+
+Open **Earn > Who can swap with you** to manage provider access:
+
+- **Open to everyone except blocked Pubkys** preserves the existing public-service default.
+- **Only approved Pubkys** requires the caller to be on your approved list. An empty list
+  denies all new quotes and swaps.
+- The blocked list takes precedence in either mode. Each list accepts up to 256 Pubkys,
+  entered one per line or separated by commas. `pubky://` prefixes are accepted.
+
+For Bitkit, approve the owning Pubky account authorized through Ring. Activity shows this account
+and the device key separately. Blocking either denies new requests.
+Changes apply without restarting the provider. Existing accepted swaps keep running and remain
+recoverable; a previously issued quote cannot start a new swap after that account is blocked.
+An admission already past its access check may finish while the policy is saved.
+
+The lists are stored in `/data/access-policy.json` at owner-only permissions and are readable
+and editable only through the dashboard's admin access guard. Keep this file in your backups.
+A separate `/data/access-policy.initialized` marker preserves this protection across identity
+resets and missing or corrupt settings. Back up that marker with the policy.
+If the policy becomes missing or invalid after initialization, new requests are denied until a valid
+policy is saved. The dashboard validates keys with the native provider before saving.
+
+This controls authenticated swap admission. Offers remain discoverable, and it does not block
+network connections. Someone can create another Pubky to evade a block; use approved-only mode
+for a private service.
+
 ### Channel purchasing
 
 Channel purchases and incoming-payment channel creation are planned separately in
@@ -205,7 +232,7 @@ operator can point the provider at a [beignet](https://github.com/coreyphillips/
 instead of LND without a different image. `iroh` is the doorbell someone handed only your pubky
 rings, and what lets a provider serve clients holding a scoped Pubky session rather than an
 account key, which is how the mobile apps sign in. `PUBKY_SWAP_REF` selects the upstream commit.
-The default is `8d5e7059d82c1dd06c3013bd038821a5c1ebaaca`, built with Rust 1.95.0 and the upstream
+The default is `03216e6b415a95da57b5bb7c03a1d9802115598e`, built with Rust 1.95.0 and the upstream
 lockfile. The image also includes `swap-identity`, an offline helper using the same recovery
 implementation. It prints the public key without opening a network connection or creating a swap.
 

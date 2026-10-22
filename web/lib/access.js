@@ -22,7 +22,8 @@
 //  - **`app_proxy`**, on older umbrelOS where that sidecar still exists. Resolved by Docker DNS,
 //    and re-resolved because its address changes across restarts.
 //
-// Reads are deliberately left open. The status view holds no secret, and gating it would mean
+// Ordinary status reads are deliberately left open. Access policy reads use the admin guard.
+// The status view holds no secret, and gating it would mean
 // that if the allow list were ever wrong you would meet a blank page instead of the message
 // telling you what to fix.
 
@@ -47,7 +48,7 @@ function createAccessGuard({ log = () => {} } = {}) {
     ? `Changes accepted from loopback and ${[...allowed].join(', ')}.`
     : 'Changes accepted from loopback only.');
 
-  /** True if this request may change something. Reads never come here. */
+  /** True if this request may use admin controls or read private access lists. */
   return function allowChange(req) {
     const addr = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
     if (addr === '127.0.0.1' || addr === '::1') return true;
@@ -93,4 +94,8 @@ function refreshAppProxy(allowed, log) {
   });
 }
 
-module.exports = { createAccessGuard };
+function requiresAdminAccess(method, path) {
+  return path === '/api/access-policy' || !['GET', 'HEAD'].includes(method);
+}
+
+module.exports = { createAccessGuard, requiresAdminAccess };

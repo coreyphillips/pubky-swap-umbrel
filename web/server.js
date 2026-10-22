@@ -18,6 +18,7 @@ const fs = require('fs');
 
 const paths = require('./lib/paths');
 const settings = require('./lib/settings');
+const accessPolicy = require('./lib/access-policy');
 const secrets = require('./lib/secrets');
 const engine = require('./lib/engine');
 const doctor = require('./lib/doctor');
@@ -30,7 +31,7 @@ const { Provider } = require('./lib/provider');
 const { Taker } = require('./lib/taker');
 const { canonicalProvider } = require('./lib/pubky');
 const { Sse } = require('./lib/sse');
-const { createAccessGuard } = require('./lib/access');
+const { createAccessGuard, requiresAdminAccess } = require('./lib/access');
 const {
   httpError, sendJson, sendError, readBody, readJson, guardMutation, serveStatic, notFound,
 } = require('./lib/http');
@@ -78,6 +79,15 @@ const allowChange = createAccessGuard({ log: (m) => logs.note(m) });
 // --- routes ------------------------------------------------------------------------------------
 
 const routes = [
+  ['GET', '/api/access-policy', async (req, res) => {
+    sendJson(res, 200, await accessPolicy.load());
+  }],
+  ['POST', '/api/access-policy', async (req, res) => {
+    guardMutation(req);
+    const policy = await accessPolicy.save(await readJson(req, { limit: 65536 }));
+    sendJson(res, 200, policy);
+  }],
+
   ['GET', '/api/bootstrap', async (req, res) => {
     sendJson(res, 200, { ...state(), log: { provider: logs.tail(200), seq: logs.seq } });
   }],
@@ -259,11 +269,10 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (path.startsWith('/api/')) {
-      // Only changes are gated. See lib/access.js: a wrong allow list should cost you a refused
-      // action with an explanation, not a blank dashboard.
-      if (req.method !== 'GET' && req.method !== 'HEAD' && !allowChange(req)) {
+      // Access lists are private admin data. Ordinary status reads remain available.
+      if (requiresAdminAccess(req.method, path) && !allowChange(req)) {
         return sendError(res, httpError(403, 'FORBIDDEN',
-          'Changes are only accepted through Umbrel\'s proxy. The app log names the address to allow.'));
+          'Admin controls and access lists require Umbrel\'s proxy. The app log names the address to allow.'));
       }
 
       if (req.method === 'POST' && LEGACY_WRITE.has(path)) {
@@ -310,6 +319,7 @@ async function bootstrap() {
   fs.mkdirSync(paths.dataDir, { recursive: true });
   const migrated = settings.migrateLegacy();
   if (migrated) notices.raise(migrated);
+  accessPolicy.initialize();
   redactor.refresh();
 
   logs.note(`Pubky Swap control panel on port ${PORT} (network ${engine.NETWORK}).`);
