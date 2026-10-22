@@ -44,6 +44,7 @@ function project(record) {
     state,
     state_detail: detail,
     peer: String(record.peer || ''),
+    peer_account: record.peer_account ? String(record.peer_account) : null,
     onchain_amount_sat: num(record.onchain_amount_sat),
     service_fee_sat: num(record.service_fee_sat),
     onchain_fee_sat: num(record.onchain_fee_sat),

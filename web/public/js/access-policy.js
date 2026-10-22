@@ -25,10 +25,13 @@ export function accessCard() {
     const blocked = el('textarea', { attrs: { rows: 5, spellcheck: 'false', placeholder: 'One Pubky per line' } });
     allowed.value = policy.allowed.join('\n');
     blocked.value = policy.blocked.join('\n');
+    let edits = 0;
+    let saving = false;
     const state = el('p.small.muted');
     const explain = el('p.small.muted');
     const entries = (input) => input.value.split(/[\s,]+/).filter(Boolean);
     const update = () => {
+      edits++;
       state.textContent = 'Unsaved changes';
       explain.textContent = mode.value === 'approved_only' && !entries(allowed).length
         ? 'No Pubkys are approved. Saving will deny all new quotes and swaps.'
@@ -39,14 +42,21 @@ export function accessCard() {
     blocked.addEventListener('input', update);
     update();
     state.textContent = '';
+    const reload = c.button({ label: 'Reload saved policy', onClick: load });
     const save = c.button({
       label: 'Save access policy', variant: 'primary', busyLabel: 'Saving',
       onClick: async () => {
+        if (saving) return;
+        saving = true;
+        reload.disabled = true;
+        const submittedEdits = edits;
         try {
           const saved = await api.saveAccessPolicy({ mode: mode.value, allowed: entries(allowed), blocked: entries(blocked) });
-          render(saved);
+          if (edits === submittedEdits) render(saved);
+          else state.textContent = 'Earlier changes saved. You still have unsaved changes.';
           toast('Access policy saved. New requests use these rules.', 'ok');
         } catch (error) { state.textContent = error.message; toast(error.message, 'bad'); }
+        finally { saving = false; reload.disabled = false; }
       },
     });
     fill(body,
@@ -55,10 +65,10 @@ export function accessCard() {
         c.field({ label: 'Approved Pubkys', control: allowed }),
         c.field({ label: 'Blocked Pubkys', control: blocked })),
       explain,
-      el('p.small.muted', { text: 'Enter up to 256 Pubkys per list. Pubky links are accepted. For Bitkit, use the owning Pubky account, not its device key.' }),
+      el('p.small.muted', { text: 'Enter up to 256 Pubkys per list. Pubky links are accepted. For Bitkit, approve the owning Pubky account shown in Activity. You can block an account or a device key.' }),
       el('p.small.muted', { text: 'Changes apply to new quotes and swaps without a restart. Accepted swaps continue and remain recoverable. Offers remain discoverable.' }),
       el('p.small.muted', { text: 'Someone can create another Pubky to evade a block. Use approved-only access for a private service.' }),
-      el('div.actions', {}, save, c.button({ label: 'Reload saved policy', onClick: load }), state));
+      el('div.actions', {}, save, reload, state));
   }
   load();
   return card;

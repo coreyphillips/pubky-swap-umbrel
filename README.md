@@ -122,14 +122,17 @@ Open **Earn > Who can swap with you** to manage provider access:
 - The blocked list takes precedence in either mode. Each list accepts up to 256 Pubkys,
   entered one per line or separated by commas. `pubky://` prefixes are accepted.
 
-For Bitkit, enter the owning Pubky account authorized through Ring, not the temporary device key.
+For Bitkit, approve the owning Pubky account authorized through Ring. Activity shows this account
+and the device key separately. Blocking either denies new requests.
 Changes apply without restarting the provider. Existing accepted swaps keep running and remain
 recoverable; a previously issued quote cannot start a new swap after that account is blocked.
 An admission already past its access check may finish while the policy is saved.
 
 The lists are stored in `/data/access-policy.json` at owner-only permissions and are readable
 and editable only through the dashboard's admin access guard. Keep this file in your backups.
-If it becomes missing or invalid after initialization, new requests are denied until a valid
+A separate `/data/access-policy.initialized` marker preserves this protection across identity
+resets and missing or corrupt settings. Back up that marker with the policy.
+If the policy becomes missing or invalid after initialization, new requests are denied until a valid
 policy is saved. The dashboard validates keys with the native provider before saving.
 
 This controls authenticated swap admission. Offers remain discoverable, and it does not block
@@ -229,7 +232,7 @@ operator can point the provider at a [beignet](https://github.com/coreyphillips/
 instead of LND without a different image. `iroh` is the doorbell someone handed only your pubky
 rings, and what lets a provider serve clients holding a scoped Pubky session rather than an
 account key, which is how the mobile apps sign in. `PUBKY_SWAP_REF` selects the upstream commit.
-The default is `4b783766d8adf243adbdeec7824ac20522fdc43f`, built with Rust 1.95.0 and the upstream
+The default is `03216e6b415a95da57b5bb7c03a1d9802115598e`, built with Rust 1.95.0 and the upstream
 lockfile. The image also includes `swap-identity`, an offline helper using the same recovery
 implementation. It prints the public key without opening a network connection or creating a swap.
 

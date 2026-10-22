@@ -25,30 +25,50 @@ function validate(value) {
         value[name].some((key) => typeof key !== 'string')) {
       throw httpError(400, 'INVALID', 'Each access list must contain at most 256 Pubkys.');
     }
-    try { result[name] = [...new Set(value[name].map(canonicalProvider))]; }
-    catch { throw httpError(400, 'INVALID', `Check the Pubkys in the ${name} list.`); }
+    result[name] = value[name].map((key, index) => {
+      try { return canonicalProvider(key); }
+      catch { throw invalidKey(name, index + 1); }
+    });
   }
   return result;
 }
 
-function load() {
-  try {
-    if (fs.statSync(paths.accessPolicy).size > 65536) throw new Error('too large');
-    return validate(JSON.parse(fs.readFileSync(paths.accessPolicy, 'utf8')));
-  } catch {
-    throw httpError(503, 'ACCESS_POLICY_UNAVAILABLE',
-      'Access policy is missing or invalid. New quotes and swaps are denied. Save a valid policy to restore access.');
-  }
+function invalidKey(list, entry) {
+  return httpError(400, 'INVALID', `Invalid Pubky in the ${list === 'allowed' ? 'approved' : 'blocked'} list at entry ${entry}.`);
 }
 
-// Upgrade once. A later missing file must never silently turn a private service public.
+function unavailable(message = '') {
+  return httpError(503, 'ACCESS_POLICY_UNAVAILABLE',
+    `Access policy is missing or invalid. New quotes and swaps are denied. ${message} Save a valid policy to restore access.`.trim());
+}
+
+function load(check = nativeValidate) {
+  return enqueue(async () => {
+    let policy;
+    try {
+      if (fs.statSync(paths.accessPolicy).size > 65536) throw new Error('too large');
+      policy = validate(JSON.parse(fs.readFileSync(paths.accessPolicy, 'utf8')));
+    } catch { throw unavailable(); }
+    try {
+      // Validate the same snapshot the editor will show, including manually changed files.
+      await withCandidate(policy, check);
+      return policy;
+    } catch (error) {
+      if (error.code === 'VALIDATOR_UNAVAILABLE') throw error;
+      throw unavailable(error.code === 'INVALID' ? error.message : '');
+    }
+  });
+}
+
+// This marker survives identity resets and missing or corrupt settings.json.
+// Write it first so an interrupted initialization fails closed on the next start.
 function initialize() {
-  const cfg = settings.load();
-  if (cfg.accessPolicyInitialized) return;
-  if (!fs.existsSync(paths.accessPolicy)) {
+  if (fs.existsSync(paths.accessPolicyInitialized)) return;
+  const createDefault = !fs.existsSync(paths.accessPolicy) && !settings.load().accessPolicyInitialized;
+  writeAtomic(paths.accessPolicyInitialized, 'initialized\n');
+  if (createDefault) {
     writeAtomic(paths.accessPolicy, JSON.stringify({ mode: 'open', allowed: [], blocked: [] }) + '\n');
   }
-  settings.save({ ...cfg, accessPolicyInitialized: true });
 }
 
 async function nativeValidate(file) {
@@ -56,27 +76,34 @@ async function nativeValidate(file) {
     await execFile(process.env.SWAP_PROVIDER_BIN || '/usr/local/bin/swap-provider',
       ['--check-access-policy', '--access-policy-file', file],
       { env: engine.childEnv('/dev/null'), timeout: 10000, maxBuffer: 16384 });
-  } catch {
-    throw httpError(400, 'INVALID',
-      'The provider could not validate this policy. Check the Pubkys and that the installed engine supports access controls.');
+  } catch (error) {
+    const invalid = error.code === 1 && /invalid (allowed|blocked) pubky at entry (\d+)/.exec(error.stderr || '');
+    if (invalid) throw invalidKey(invalid[1], invalid[2]);
+    throw httpError(503, 'VALIDATOR_UNAVAILABLE',
+      'The provider could not validate the policy. Check that the engine is installed, supports access controls, and can run.');
+  }
+}
+
+async function withCandidate(policy, action) {
+  const dir = fs.mkdtempSync(path.join(paths.dataDir, '.access-policy-'));
+  const candidate = path.join(dir, 'policy.json');
+  try {
+    writeAtomic(candidate, JSON.stringify(policy) + '\n');
+    return await action(candidate);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
 function save(value, check = nativeValidate) {
   const policy = validate(value);
-  return enqueue(async () => {
-    // Ask the engine to validate actual Ed25519 keys before replacing the active policy.
-    const dir = fs.mkdtempSync(path.join(paths.dataDir, '.access-policy-'));
-    const candidate = path.join(dir, 'policy.json');
-    try {
-      writeAtomic(candidate, JSON.stringify(policy) + '\n');
-      await check(candidate);
-      fs.renameSync(candidate, paths.accessPolicy);
-      return policy;
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
+  return enqueue(() => withCandidate(policy, async (candidate) => {
+    await check(candidate);
+    // Saving after an identity reset must preserve the initialized state too.
+    writeAtomic(paths.accessPolicyInitialized, 'initialized\n');
+    fs.renameSync(candidate, paths.accessPolicy);
+    return policy;
+  }));
 }
 
 module.exports = { initialize, load, save, validate };

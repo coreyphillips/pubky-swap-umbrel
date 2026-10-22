@@ -129,7 +129,7 @@ function matches(swap) {
 
 function searches(swap) {
   if (!search) return true;
-  const hay = `${swap.swap_id} ${swap.peer} ${swap.funding || ''} ${swap.spend || ''} ${swap.observed_claim || ''}`.toLowerCase();
+  const hay = `${swap.swap_id} ${swap.peer} ${swap.peer_account || ''} ${swap.funding || ''} ${swap.spend || ''} ${swap.observed_claim || ''}`.toLowerCase();
   return hay.includes(search);
 }
 
@@ -203,7 +203,7 @@ function row(swap, snap) {
     // happened, and the two directions put your money in opposite places.
     el('td.small.muted', { text: directionLabel(swap.direction, { role: swap.role, short: true }) }),
     el('td.num', { text: fmt.sats(swap.onchain_amount_sat) }),
-    el('td.mono.small', { text: fmt.shortKey(swap.peer) }),
+    el('td.mono.small', { text: fmt.shortKey(swap.peer_account || swap.peer) }),
     el('td', {}, el('div.row', { style: { gap: 'var(--s-2)' } }, track(swap, { compact: true }), el('span.small.muted', { text: d.headline }))),
     el('td.num', { text: swap.state === 'claimed' && swap.role === 'provider' ? `+${fmt.sats(swap.service_fee_sat, { unit: false })}` : '—' }),
     el('td.small.muted', { text: fmt.relTime(swap.updated_at_unix) }));
@@ -265,7 +265,8 @@ function detailModal(swap, snap) {
       el('div.card-foot', {},
         c.detail([
           ...money,
-          ['Counterparty', c.copyText(swap.peer, { short: true })],
+          ['Pubky account', c.copyText(swap.peer_account || swap.peer, { short: true })],
+          ...(swap.peer_account ? [['Device key', c.copyText(swap.peer, { short: true })]] : []),
           ['Swap id', c.copyText(swap.swap_id, { short: true })],
           ['Funding', swap.funding ? c.copyText(swap.funding, { short: true }) : 'not broadcast'],
           // The engine's own spend is its claim or refund. A swap the other side claimed needs

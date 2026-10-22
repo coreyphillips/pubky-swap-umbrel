@@ -51,3 +51,22 @@ test('a broken policy offers an explicit private replacement, but forbidden read
   assert.equal(button(denied, 'Replace policy'), undefined);
   assert.equal(button(denied, 'Save access policy'), undefined);
 });
+
+
+test('edits made while saving survive the response and remain marked unsaved', async () => {
+  api.accessPolicy = async () => ({ mode: 'open', allowed: [], blocked: [] });
+  let complete;
+  api.saveAccessPolicy = (value) => new Promise(resolve => { complete = () => resolve(value); });
+  const card = accessCard();
+  await settle();
+  const blocked = [...card.walk()].filter(node => node.tagName === 'TEXTAREA')[1];
+  blocked.value = 'first';
+  blocked.events.input();
+  const saving = button(card, 'Save access policy').events.click();
+  blocked.value = 'first\nsecond';
+  blocked.events.input();
+  complete();
+  await saving;
+  assert.equal([...card.walk()].filter(node => node.tagName === 'TEXTAREA')[1].value, 'first\nsecond');
+  assert.match(card.textContent, /still have unsaved changes/);
+});

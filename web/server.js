@@ -80,7 +80,7 @@ const allowChange = createAccessGuard({ log: (m) => logs.note(m) });
 
 const routes = [
   ['GET', '/api/access-policy', async (req, res) => {
-    sendJson(res, 200, accessPolicy.load());
+    sendJson(res, 200, await accessPolicy.load());
   }],
   ['POST', '/api/access-policy', async (req, res) => {
     guardMutation(req);

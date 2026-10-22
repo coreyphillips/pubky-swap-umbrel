@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compil
 
 ARG PUBKY_SWAP_REPO=https://github.com/coreyphillips/pubky-swap.git
 # Pin the reviewed engine source and retain its lockfile when rebuilding an app version.
-ARG PUBKY_SWAP_REF=4b783766d8adf243adbdeec7824ac20522fdc43f
+ARG PUBKY_SWAP_REF=03216e6b415a95da57b5bb7c03a1d9802115598e
 ARG TARGETARCH
 
 WORKDIR /src
