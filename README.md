@@ -14,7 +14,7 @@ negotiation ride on the [Pubky](https://pubky.org) network.
 
 ## Install
 
-The community store installs version `0.2.6` for AMD64 and ARM64. See
+The community store installs version `0.2.7` for AMD64 and ARM64. See
 [the integration record](docs/DURABLE_INTEGRATION.md) for the matching Bitkit and Ring builds
 and the funded regtest results.
 
@@ -214,7 +214,7 @@ digest, which cannot be known before the build publishes it.
 So a release is three steps:
 
 1. Merge the code, leaving `version` in `umbrel-app.yml` and the image line alone.
-2. Push a tag (`v0.2.6`). `build-image.yml` uses the reviewed upstream pin in the Dockerfile, builds
+2. Push a tag (`v0.2.7`). `build-image.yml` uses the reviewed upstream pin in the Dockerfile, builds
    each architecture on a runner of that architecture, stitches them into one manifest list, and prints the exact
    `image:` line to use, digest included, alongside the pubky-swap commit it was built from.
 3. Open a second PR bumping `version` and the image tag and digest together. That is the only
