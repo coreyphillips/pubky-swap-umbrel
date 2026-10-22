@@ -108,6 +108,7 @@ function providerConfig(cfg, statusAddr) {
 
     data_dir: paths.providerDir,
     status_addr: statusAddr,
+    access_policy_file: paths.accessPolicy,
     // Answer the doorbell, so someone handed only your pubky can reach you.
     //
     // Pubky's private messages live at a path derived from an ECDH shared secret, which is what

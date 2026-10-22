@@ -50,6 +50,9 @@ export const api = {
   diagnostics: (signal) => request('/api/diagnostics', { signal }),
   runDiagnostics: () => request('/api/diagnostics/run', { method: 'POST', body: {} }),
 
+  accessPolicy: () => request('/api/access-policy'),
+  saveAccessPolicy: (policy) => request('/api/access-policy', { method: 'POST', body: policy }),
+
   saveSettings: (patch) => request('/api/settings', { method: 'POST', body: patch }),
 
   setPhrase: (phrase) => request('/api/identity/phrase', { method: 'POST', body: { phrase } }),

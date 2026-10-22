@@ -36,6 +36,7 @@ const paths = {
 
   // Rates, limits and preferences. Never secrets.
   settings: path.join(DATA_DIR, 'settings.json'),
+  accessPolicy: path.join(DATA_DIR, 'access-policy.json'),
 
   // Pre-facelift config, migrated and scrubbed on first boot. Held a plaintext recovery phrase.
   legacyConfig: path.join(DATA_DIR, 'config.json'),
