@@ -2,7 +2,7 @@ manifestVersion: 1
 id: pubky-swap
 category: bitcoin
 name: Pubky Swap
-version: "0.2.6"
+version: "0.2.7"
 tagline: Run a self-hosted Lightning to on-chain swap provider on your own node
 icon: https://raw.githubusercontent.com/coreyphillips/pubky-swap-umbrel/main/pubky-swap/icon.svg
 gallery:
@@ -45,17 +45,19 @@ dependencies:
   # whichever server is installed without declaring anything.
   - lightning
 releaseNotes: >-
-  Swap details now show the claim transaction of a swap the other side claimed, instead of
-  reporting the provider's own spend as not broadcast.
+  Control who can use your provider from Earn > Who can swap with you. Choose open access with
+  a blocklist or allow only approved Pubky accounts. Changes apply without restarting the
+  provider, and accepted swaps continue and remain recoverable.
 
 
-  The miner cost of a swap you funded now shows what it was charged beside what its funding
-  actually paid, measured once the swap finishes. Swaps that finished before this update keep
-  showing only the quoted cost.
+  Activity now shows the verified Pubky account and device key for session clients such as
+  Bitkit. Blocking either denies new requests. Private access remains protected after identity
+  resets or missing policy files, invalid entries are identified, and unsaved edits survive
+  pending saves.
 
 
-  Updating from 0.2.5 needs no migration. Updating from 0.2.4 or earlier still requires the storage
-  migration introduced in 0.2.5: stop the app and follow
+  Updating from 0.2.5 or 0.2.6 needs no storage migration. Updating from 0.2.4 or earlier still
+  requires the storage migration introduced in 0.2.5: stop the app and follow
   https://github.com/coreyphillips/pubky-swap-umbrel/blob/main/docs/STORAGE_MIGRATION.md first.
 
 
